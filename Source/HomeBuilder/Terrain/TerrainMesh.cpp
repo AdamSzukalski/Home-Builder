@@ -20,7 +20,7 @@ void ATerrainMesh::BeginPlay()
 {
 	Super::BeginPlay();
 	
-	GenerateQuad();
+	GenerateTerrain();
 	
 	MeshComponent->CreateMeshSection(0, Vertices, Triangles, Normals, UVs, VertexColors, Tangents, /*bCreateCollision=*/true);
 	if (!Material) return;
@@ -82,7 +82,7 @@ void ATerrainMesh::Tick(float DeltaTime)
 }
 
 //Terrain Generation Functions
-void ATerrainMesh::GenerateQuad()
+void ATerrainMesh::GenerateTerrain()
 {
 	//General index formula = index = y * W + x
 	int32 W = GridSize + 1;
@@ -118,11 +118,38 @@ void ATerrainMesh::GenerateQuad()
 
 	UKismetProceduralMeshLibrary::CalculateTangentsForMesh(Vertices, Triangles, UVs, Normals, Tangents);
 }
-
-void ATerrainMesh::UpdateMesh(bool bRecalcTangents)
+void ATerrainMesh::RecalculateNormalsInRegion(int32 MinX, int32 MinY, int32 MaxX, int32 MaxY)
 {
-	if (bRecalcTangents)
-		UKismetProceduralMeshLibrary::CalculateTangentsForMesh(Vertices, Triangles, UVs, Normals, Tangents);
+	MinX = FMath::Max(MinX - 1, 0);
+	MinY = FMath::Max(MinY - 1, 0);     
+	MaxX = FMath::Min(MaxX + 1, GridSize);
+	MaxY = FMath::Min(MaxY + 1, GridSize); 
+	for (int y = MinY; y <= MaxY; y++)
+	{
+		for (int x = MinX; x <= MaxX; x++)
+		{
+			int32 W = GridSize + 1;
+			int32 xl = FMath::Max(x - 1, 0),        xr = FMath::Min(x + 1, GridSize);
+			int32 yd = FMath::Max(y - 1, 0),        yu = FMath::Min(y + 1, GridSize);
+
+			float hL = Vertices[y  * W + xl].Z;
+			float hR = Vertices[y  * W + xr].Z;
+			float hD = Vertices[yd * W + x ].Z;
+			float hU = Vertices[yu * W + x ].Z;
+
+			FVector N(hL - hR, hD - hU, 2.0f * CellSize);
+			N.Normalize();
+			Normals[y * W + x] = N;
+
+			FVector T(2.0f * CellSize, 0.0f, hR - hL);
+			T.Normalize();
+			Tangents[y * W + x] = FProcMeshTangent(T, false);/*flip it if tangents look weird*/
+		}
+	}
+}
+
+void ATerrainMesh::UpdateMesh()
+{
 	MeshComponent->UpdateMeshSection(0, Vertices, Normals, UVs, VertexColors, Tangents);
 }
 
@@ -199,7 +226,7 @@ void ATerrainMesh::HandleModeChange(EToolMode NewMode)
 }
 //Sculpting
 void ATerrainMesh::SculptStarted(){bIsSculptingMode = true;}
-void ATerrainMesh::SculptFinished(){bIsSculptingMode = false; UpdateMesh(true);}
+void ATerrainMesh::SculptFinished(){bIsSculptingMode = false;}
 
 void ATerrainMesh::ApplyHeightChange(int32 TexelX, int32 TexelY, bool bIsRaising, float DeltaTime)
 {
@@ -272,7 +299,8 @@ void ATerrainMesh::ApplyHeightChange(int32 TexelX, int32 TexelY, bool bIsRaising
         }
         Vertices = MoveTemp(Smoothed);
     }
-	UpdateMesh(false);
+	RecalculateNormalsInRegion(MinX, MinY, MaxX, MaxY);
+	UpdateMesh();
 }
 //Painting
 void ATerrainMesh::PaintStarted(){bIsPaintingMode = true;}
@@ -332,8 +360,26 @@ void ATerrainMesh::ApplyWeightChange(int32 TexelX, int32 TexelY, bool bIsPaintin
 				FColor& Color = VertexColors[Index];
 				if (Channel)
 				{
-					int32 NewChanel = FMath::Clamp(static_cast<int32>(Color.*Channel) + static_cast<int32>(IntegerPart), 0, 255);
-					Color.*Channel = static_cast<uint8>(NewChanel);
+					int32 Old       = Color.*Channel;
+					int32 NewTarget = FMath::Clamp(Old + static_cast<int32>(IntegerPart), 0, 255);
+					int32 Added     = NewTarget - Old;           
+					Color.*Channel  = static_cast<uint8>(NewTarget);
+
+					uint8 FColor::* All[4] = { &FColor::R, &FColor::G, &FColor::B, &FColor::A };
+
+					int32 OthersSum{};
+					for (uint8 FColor::* Ch : All)
+						if (Ch != Channel) OthersSum += Color.*Ch;
+
+					if (OthersSum > 0)
+					{
+						for (uint8 FColor::* Ch : All)
+						{
+							if (Ch == Channel) continue;
+							int32 Take = FMath::RoundToInt(Added * (static_cast<float>(Color.*Ch) / OthersSum));
+							Color.*Ch  = static_cast<uint8>(FMath::Clamp(static_cast<int32>(Color.*Ch) - Take, 0, 255));
+						}
+					}
 				}
 				else
 				{
@@ -345,7 +391,7 @@ void ATerrainMesh::ApplyWeightChange(int32 TexelX, int32 TexelY, bool bIsPaintin
 			}
 		}
 	}
-	UpdateMesh(false);
+	UpdateMesh();
 }
 
 

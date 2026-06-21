@@ -65,8 +65,9 @@ public:
 	TArray<FColor> VertexColors;
 	TArray<FProcMeshTangent> Tangents;
 	
-	void GenerateQuad();
-	void UpdateMesh(bool bRecalcTangents);
+	void GenerateTerrain();
+	void RecalculateNormalsInRegion(int32 MinX, int32 MinY, int32 MaxX, int32 MaxY);
+	void UpdateMesh();
 
 	//Terraformation Tools - Assigning Variables and Functions
 

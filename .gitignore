@@ -20,6 +20,7 @@ Script/
 .vs/
 *.VC.db
 *.VC.opendb
+*.vsconfig
 
 # Mac
 .DS_Store
