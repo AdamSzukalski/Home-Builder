@@ -21,17 +21,17 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Terrain|Mesh")
 	int32 GridSize = 64;
 	UPROPERTY(EditAnywhere, Category = "Terrain|Mesh")
-	int32 CellSize = 64;
+	int32 QuadSize = 64;
 	UPROPERTY(EditAnywhere, Category = "Terrain|Mesh")
 	UMaterialInterface* Material;
 
 	UFUNCTION()
 	void HandleModeChange(EToolMode NewMode);
-	UPROPERTY(EditAnywhere, Category = "Terrain|TerraformInput")
+	UPROPERTY(EditAnywhere, Category = "Terrain|Input")
 	UInputMappingContext* IMC_Terraform;
-	UPROPERTY(EditAnywhere, Category = "Terrain|TerraformInput")
+	UPROPERTY(EditAnywhere, Category = "Terrain|Input")
 	UInputAction* IA_Sculpt;
-	UPROPERTY(EditAnywhere, Category = "Terrain|TerraformInput")
+	UPROPERTY(EditAnywhere, Category = "Terrain|Input")
 	UInputAction* IA_Paint;
 
 	UPROPERTY(EditAnywhere, Category = "Terrain|Sculpt")
@@ -41,16 +41,21 @@ public:
 	
 	UPROPERTY(EditAnywhere, Category = "Terrain|Paint")
 	float PaintStrength = 150;
-	
+
+	UPROPERTY(EditAnywhere, Category = "Terrain|Brush")
+	UMaterialInterface* BrushMaterial;
+	UPROPERTY(EditAnywhere, Category = "Terrain|Brush")
+	float ProjectionDepth = 500.f;
 
 	//Main Variables and Functions
 	APlayerController* PlayerController;
 	AGameHUD* GameHUD;
 	FVector BrushCenter;
+	FVector BrushNormal;
 	
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
-	void UpdateBrushPosition();
+	bool UpdateBrushPosition();
 	void CalculateBrushBounds(int32 TexelX, int32 TexelY,
 		int32& MinX, int32& MinY, int32& MaxX, int32& MaxY);
 	void WorldToTexel(const FVector& WorldPos, int32& VertexX, int32& VertexY) const;
@@ -70,7 +75,8 @@ public:
 	void UpdateMesh();
 
 	//Terraformation Tools - Assigning Variables and Functions
-
+	UDecalComponent* BrushDecal;
+	
 	//Sculpting
 	bool bIsSculptingMode;
 	TMap<FIntPoint, float> HeightRemainder;

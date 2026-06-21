@@ -4,16 +4,22 @@
 #include "KismetProceduralMeshLibrary.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "Components/DecalComponent.h"
 #include "GameTypes.h"
 #include "GameHUD.h"
 
 ATerrainMesh::ATerrainMesh()
 {
 	PrimaryActorTick.bCanEverTick = true;
+	
 	MeshComponent =  CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("TerrainMesh"));
 	RootComponent = MeshComponent;
 	MeshComponent->SetCollisionResponseToAllChannels(ECR_Block);
 	MeshComponent->bUseAsyncCooking = true;
+
+	BrushDecal = CreateDefaultSubobject<UDecalComponent>(TEXT("BrushDecal"));
+	BrushDecal->SetupAttachment(RootComponent);
+	
 }
 
 void ATerrainMesh::BeginPlay()
@@ -44,15 +50,26 @@ void ATerrainMesh::BeginPlay()
 	if (!GameHUD) return;
 	GameHUD->OnModeChanged.AddDynamic(this, &ATerrainMesh::HandleModeChange);
 	GameHUD->SetMode(EToolMode::Terrain);
+
+	if (!BrushDecal) return;
+	if (!BrushMaterial) return;
+	BrushDecal->SetMaterial(0, BrushMaterial);
 }
 
 void ATerrainMesh::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-
-	UpdateBrushPosition();
+	if (!BrushDecal || 	!GameHUD) return;
+	bool bHit = UpdateBrushPosition();
+	BrushDecal->SetVisibility(bHit);
+	if (bHit)
+	{
+		BrushDecal->SetWorldLocation(BrushCenter);
+		BrushDecal->SetWorldRotation(FRotationMatrix::MakeFromX(BrushNormal).Rotator());
+		const float WorldRadius = GameHUD->BrushSize * QuadSize;
+		BrushDecal->DecalSize = FVector(ProjectionDepth, WorldRadius, WorldRadius);
+	}
 	
-	if (!GameHUD)return;
 	int32 TexelX, TexelY;
 	WorldToTexel(BrushCenter, TexelX, TexelY);
 	//Sculpting
@@ -91,7 +108,7 @@ void ATerrainMesh::GenerateTerrain()
 	{
 		for (int32 x = 0; x <= GridSize; x++)
 		{
-			Vertices.Add(FVector(x * CellSize, y * CellSize, 0.f));
+			Vertices.Add(FVector(x * QuadSize, y * QuadSize, 0.f));
 			UVs.Add(FVector2D(x, y));
 			VertexColors.Add(FColor(0,0,0,0));
 		}
@@ -137,11 +154,11 @@ void ATerrainMesh::RecalculateNormalsInRegion(int32 MinX, int32 MinY, int32 MaxX
 			float hD = Vertices[yd * W + x ].Z;
 			float hU = Vertices[yu * W + x ].Z;
 
-			FVector N(hL - hR, hD - hU, 2.0f * CellSize);
+			FVector N(hL - hR, hD - hU, 2.0f * QuadSize);
 			N.Normalize();
 			Normals[y * W + x] = N;
 
-			FVector T(2.0f * CellSize, 0.0f, hR - hL);
+			FVector T(2.0f * QuadSize, 0.0f, hR - hL);
 			T.Normalize();
 			Tangents[y * W + x] = FProcMeshTangent(T, false);/*flip it if tangents look weird*/
 		}
@@ -158,13 +175,13 @@ void ATerrainMesh::WorldToTexel(const FVector& WorldPos, int32& VertexX, int32& 
 {
 	FVector LocalPosition = GetActorTransform().InverseTransformPosition(WorldPos);
 	
-	VertexX = FMath::Clamp(FMath::RoundToInt32(LocalPosition.X / CellSize), 0, GridSize);
-	VertexY = FMath::Clamp(FMath::RoundToInt32(LocalPosition.Y / CellSize), 0, GridSize);
+	VertexX = FMath::Clamp(FMath::RoundToInt32(LocalPosition.X / QuadSize), 0, GridSize);
+	VertexY = FMath::Clamp(FMath::RoundToInt32(LocalPosition.Y / QuadSize), 0, GridSize);
 	
 }
-void ATerrainMesh::UpdateBrushPosition()
+bool ATerrainMesh::UpdateBrushPosition()
 {
-	if (!PlayerController) return;
+	if (!PlayerController) return false;
 	
 	float MouseX, MouseY;
 	PlayerController->GetMousePosition(MouseX, MouseY);
@@ -183,7 +200,9 @@ void ATerrainMesh::UpdateBrushPosition()
 	if (bHit)
 	{
 		BrushCenter = Hit.ImpactPoint;
+		BrushNormal = Hit.ImpactNormal;
 	}
+	return bHit;
 }
 
 void ATerrainMesh::CalculateBrushBounds(int32 TexelX, int32 TexelY,
@@ -215,6 +234,7 @@ void ATerrainMesh::HandleModeChange(EToolMode NewMode)
 	{
 		bIsSculptingMode = false;
 		bIsPaintingMode = false;
+		BrushDecal->SetVisibility(false);
 		Subsystem->RemoveMappingContext(IMC_Terraform);
 		SetActorTickEnabled(false);
 		return;
@@ -328,8 +348,6 @@ void ATerrainMesh::ApplyWeightChange(int32 TexelX, int32 TexelY, bool bIsPaintin
 		case EPaintTexture::Grass:    Channel = nullptr;    break;
 	}
 	
-	if (Channel == nullptr && !bIsPainting) return;
-	
 	for (int32 y = MinY; y <= MaxY; y++)
 	{
 		for (int32 x = MinX; x <= MaxX; x++)
@@ -358,7 +376,7 @@ void ATerrainMesh::ApplyWeightChange(int32 TexelX, int32 TexelY, bool bIsPaintin
 			{
 				// Swap to Render targets if more textures needed
 				FColor& Color = VertexColors[Index];
-				if (Channel)
+				if (Channel && bIsPainting)
 				{
 					int32 Old       = Color.*Channel;
 					int32 NewTarget = FMath::Clamp(Old + static_cast<int32>(IntegerPart), 0, 255);
@@ -383,10 +401,10 @@ void ATerrainMesh::ApplyWeightChange(int32 TexelX, int32 TexelY, bool bIsPaintin
 				}
 				else
 				{
-					Color.R = static_cast<uint8>(FMath::Clamp(static_cast<int32>(Color.R) - static_cast<int32>(IntegerPart), 0, 255));
-					Color.G = static_cast<uint8>(FMath::Clamp(static_cast<int32>(Color.G) - static_cast<int32>(IntegerPart), 0, 255));
-					Color.B = static_cast<uint8>(FMath::Clamp(static_cast<int32>(Color.B) - static_cast<int32>(IntegerPart), 0, 255));
-					Color.A = static_cast<uint8>(FMath::Clamp(static_cast<int32>(Color.A) - static_cast<int32>(IntegerPart), 0, 255));
+					Color.R = static_cast<uint8>(FMath::Clamp(static_cast<int32>(Color.R) - static_cast<int32>(FMath::Abs(IntegerPart)), 0, 255));
+					Color.G = static_cast<uint8>(FMath::Clamp(static_cast<int32>(Color.G) - static_cast<int32>(FMath::Abs(IntegerPart)), 0, 255));
+					Color.B = static_cast<uint8>(FMath::Clamp(static_cast<int32>(Color.B) - static_cast<int32>(FMath::Abs(IntegerPart)), 0, 255));
+					Color.A = static_cast<uint8>(FMath::Clamp(static_cast<int32>(Color.A) - static_cast<int32>(FMath::Abs(IntegerPart)), 0, 255));
 				}
 			}
 		}
