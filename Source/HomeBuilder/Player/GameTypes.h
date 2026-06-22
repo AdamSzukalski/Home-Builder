@@ -23,7 +23,6 @@ enum class ETerrainTool : uint8
 UENUM(BlueprintType)
 enum class EBuildTool : uint8
 {
-	Floor UMETA(DisplayName = "Floor"),
 	Wall UMETA(DisplayName = "Wall"),
 	Door UMETA(DisplayName = "Door"),
 	Window UMETA(DisplayName = "Window"),

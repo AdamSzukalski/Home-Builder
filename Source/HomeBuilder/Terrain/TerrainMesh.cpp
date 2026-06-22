@@ -98,6 +98,29 @@ void ATerrainMesh::Tick(float DeltaTime)
 	}
 }
 
+void ATerrainMesh::HandleModeChange(EToolMode NewMode)
+{
+	if (!PlayerController) return;
+	
+	UEnhancedInputLocalPlayerSubsystem* Subsystem =
+		ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PlayerController->GetLocalPlayer());
+	if (!Subsystem) return;
+	
+	if (NewMode != EToolMode::Terrain)
+	{
+		bIsSculptingMode = false;
+		bIsPaintingMode = false;
+		BrushDecal->SetVisibility(false);
+		Subsystem->RemoveMappingContext(IMC_Terraform);
+		SetActorTickEnabled(false);
+		return;
+	}
+	bIsSculptingMode = false;
+	bIsPaintingMode = false;
+	Subsystem->AddMappingContext(IMC_Terraform, 0);
+	SetActorTickEnabled(true);
+}
+
 //Terrain Generation Functions
 void ATerrainMesh::GenerateTerrain()
 {
@@ -220,29 +243,6 @@ void ATerrainMesh::CalculateBrushBounds(int32 TexelX, int32 TexelY,
 
 	MaxX = FMath::Clamp(TexelX + GameHUD->BrushSize , 0, GridSize);
 	MaxY = FMath::Clamp(TexelY + GameHUD->BrushSize , 0, GridSize);
-}
-
-void ATerrainMesh::HandleModeChange(EToolMode NewMode)
-{
-	if (!PlayerController) return;
-	
-	UEnhancedInputLocalPlayerSubsystem* Subsystem =
-		ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PlayerController->GetLocalPlayer());
-	if (!Subsystem) return;
-	
-	if (NewMode != EToolMode::Terrain)
-	{
-		bIsSculptingMode = false;
-		bIsPaintingMode = false;
-		BrushDecal->SetVisibility(false);
-		Subsystem->RemoveMappingContext(IMC_Terraform);
-		SetActorTickEnabled(false);
-		return;
-	}
-	bIsSculptingMode = false;
-	bIsPaintingMode = false;
-	Subsystem->AddMappingContext(IMC_Terraform, 0);
-	SetActorTickEnabled(true);
 }
 //Sculpting
 void ATerrainMesh::SculptStarted(){bIsSculptingMode = true;}

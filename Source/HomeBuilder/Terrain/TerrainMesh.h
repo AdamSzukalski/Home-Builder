@@ -24,9 +24,7 @@ public:
 	int32 QuadSize = 64;
 	UPROPERTY(EditAnywhere, Category = "Terrain|Mesh")
 	UMaterialInterface* Material;
-
-	UFUNCTION()
-	void HandleModeChange(EToolMode NewMode);
+	
 	UPROPERTY(EditAnywhere, Category = "Terrain|Input")
 	UInputMappingContext* IMC_Terraform;
 	UPROPERTY(EditAnywhere, Category = "Terrain|Input")
@@ -36,7 +34,7 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "Terrain|Sculpt")
 	float SculptStrength = 150;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Terrain|Sculpt")
+	UPROPERTY(EditAnywhere, Category = "Terrain|Sculpt")
 	float SmoothingStrength = 0.05f;
 	
 	UPROPERTY(EditAnywhere, Category = "Terrain|Paint")
@@ -47,14 +45,18 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Terrain|Brush")
 	float ProjectionDepth = 500.f;
 
+	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaTime) override;
+
+	UFUNCTION()
+	void HandleModeChange(EToolMode NewMode);
+protected:
 	//Main Variables and Functions
 	APlayerController* PlayerController;
 	AGameHUD* GameHUD;
 	FVector BrushCenter;
 	FVector BrushNormal;
 	
-	virtual void BeginPlay() override;
-	virtual void Tick(float DeltaTime) override;
 	bool UpdateBrushPosition();
 	void CalculateBrushBounds(int32 TexelX, int32 TexelY,
 		int32& MinX, int32& MinY, int32& MaxX, int32& MaxY);

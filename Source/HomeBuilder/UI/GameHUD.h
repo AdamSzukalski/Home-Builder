@@ -24,7 +24,7 @@ public:
 	ETerrainTool CurrentTerrainTool = ETerrainTool::Raise;
 
 	UPROPERTY(BlueprintReadWrite, Category="UI|State")
-	EBuildTool CurrentBuildTool = EBuildTool::Floor;
+	EBuildTool CurrentBuildTool = EBuildTool::Wall;
 
 	// Paint Texture
 	UPROPERTY(BlueprintReadWrite, Category="UI|State")
