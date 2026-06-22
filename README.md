@@ -55,9 +55,13 @@ Automatically generated folders (Binaries, Intermediate, Saved, DerivedDataCache
 
 ---
 
-## 🖼️ Screenshots
+## 🖼️ Media
 
-*(Will be added after uploading images to the `Screenshots/` folder)*
+### Demo Video
+[Demo video](https://drive.google.com/file/d/1kjTWiadPv8AZh6xOCwodlZzc5cTshcfS/view?usp=drive_link)
+### Screenshots
+![Screenshot 1](Screenshots/editor_01.png)
+![Screenshot 2](Screenshots/editor_02.png)
 
 ---
 
