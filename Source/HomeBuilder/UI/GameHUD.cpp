@@ -39,6 +39,11 @@ void AGameHUD::SetBuildTool(EBuildTool NewTool)
 	CurrentBuildTool = NewTool;
 }
 
+void AGameHUD::RequestDelete()
+{
+	OnDeleteRequested.Broadcast();
+}
+
 void AGameHUD::SetBrushSize(int32 NewSize)
 {
 	BrushSize = NewSize;

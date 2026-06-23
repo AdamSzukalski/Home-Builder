@@ -14,6 +14,7 @@ enum class EToolMode : uint8
 UENUM(BlueprintType)
 enum class ETerrainTool : uint8
 {
+	None UMETA(DisplayName = "None"),
 	Raise UMETA(DisplayName = "Raise"),
 	Lower UMETA(DisplayName = "Lower"),
 	Paint UMETA(DisplayName = "Paint"),
@@ -23,11 +24,12 @@ enum class ETerrainTool : uint8
 UENUM(BlueprintType)
 enum class EBuildTool : uint8
 {
+	None UMETA(DisplayName = "None"),
+	Floor UMETA(DisplayName = "Floor"),
 	Wall UMETA(DisplayName = "Wall"),
 	Door UMETA(DisplayName = "Door"),
 	Window UMETA(DisplayName = "Window"),
 	Roof UMETA(DisplayName = "Roof"),
-	Delete UMETA(DisplayName = "Delete"),
 };
 
 UENUM(BlueprintType)
@@ -41,3 +43,4 @@ enum class EPaintTexture : uint8
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnModeChanged, EToolMode, NewMode);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnDeleteRequested);

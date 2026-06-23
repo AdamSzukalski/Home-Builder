@@ -22,12 +22,12 @@ void UHudUI::UpdateButtons()
 	ApplyButtonStyle(Buttons.FindRef("Lower"), GameHUD->CurrentTerrainTool == ETerrainTool::Lower);
 	ApplyButtonStyle(Buttons.FindRef("Paint"), GameHUD->CurrentTerrainTool == ETerrainTool::Paint);
 	ApplyButtonStyle(Buttons.FindRef("Erase"), GameHUD->CurrentTerrainTool == ETerrainTool::Erase);
-	
+
+	ApplyButtonStyle(Buttons.FindRef("Floor"), GameHUD->CurrentBuildTool == EBuildTool::Floor);
 	ApplyButtonStyle(Buttons.FindRef("Wall"), GameHUD->CurrentBuildTool == EBuildTool::Wall);
 	ApplyButtonStyle(Buttons.FindRef("Door"), GameHUD->CurrentBuildTool == EBuildTool::Door);
 	ApplyButtonStyle(Buttons.FindRef("Window"), GameHUD->CurrentBuildTool == EBuildTool::Window);
 	ApplyButtonStyle(Buttons.FindRef("Roof"), GameHUD->CurrentBuildTool == EBuildTool::Roof);
-	ApplyButtonStyle(Buttons.FindRef("Delete"), GameHUD->CurrentBuildTool == EBuildTool::Delete);
 
 	if (!PaintOptionsPanel) return;
 	PaintOptionsPanel->SetVisibility(GameHUD->CurrentTerrainTool == ETerrainTool::Paint? ESlateVisibility::Visible : ESlateVisibility::Collapsed);

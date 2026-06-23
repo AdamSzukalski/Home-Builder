@@ -60,6 +60,11 @@ void ATerrainMesh::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 	if (!BrushDecal || 	!GameHUD) return;
+	if (GameHUD->CurrentTerrainTool == ETerrainTool::None)
+	{
+		BrushDecal->SetVisibility(false);
+		return;
+	}
 	bool bHit = UpdateBrushPosition();
 	BrushDecal->SetVisibility(bHit);
 	if (bHit)

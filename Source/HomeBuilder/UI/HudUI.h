@@ -40,9 +40,10 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "UI|Functionality")
 	USizeBox* PaintOptionsPanel;
-
-protected:
+	
+	UFUNCTION(BlueprintCallable)
 	void ApplyButtonStyle(UButton* Button, bool bIsActive);
+protected:
 	void ApplyTextureButtonStyle(UButton* Button, bool bIsActive);
 	
 };

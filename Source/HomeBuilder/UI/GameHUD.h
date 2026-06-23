@@ -21,10 +21,10 @@ public:
 	EToolMode CurrentMode = EToolMode::Terrain;
 
 	UPROPERTY(BlueprintReadWrite, Category="UI|State")
-	ETerrainTool CurrentTerrainTool = ETerrainTool::Raise;
+	ETerrainTool CurrentTerrainTool = ETerrainTool::None;
 
 	UPROPERTY(BlueprintReadWrite, Category="UI|State")
-	EBuildTool CurrentBuildTool = EBuildTool::Wall;
+	EBuildTool CurrentBuildTool = EBuildTool::None;
 
 	// Paint Texture
 	UPROPERTY(BlueprintReadWrite, Category="UI|State")
@@ -52,18 +52,26 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "UI|Events")
 	FOnModeChanged OnModeChanged;
-
+	UPROPERTY(BlueprintCallable, Category = "UI|Events")
+	FOnDeleteRequested OnDeleteRequested;
+	
+	UFUNCTION(BLueprintCallable, Category = "UI|Events")
+	void RequestDelete();
+	
 	UFUNCTION(BlueprintCallable, Category = "UI|State")
 	void SetTerrainTool(ETerrainTool NewTool);
-
-	UFUNCTION(BlueprintCallable, Category = "UI|State")
-	void SetBuildTool(EBuildTool NewTool);
-
+	
 	UFUNCTION(BlueprintCallable, Category = "UI|State")
 	void SetBrushSize(int32 NewSize);
 
 	UFUNCTION(BlueprintCallable, Category = "UI|State")
 	void SetPaintTexture(EPaintTexture NewPaintTexture);
+
+	UFUNCTION(BlueprintCallable, Category = "UI|State")
+	void SetBuildTool(EBuildTool NewTool);
+
+
+	
 
 	// Economy
 	UFUNCTION(BlueprintCallable, Category = "UI|Economy")
