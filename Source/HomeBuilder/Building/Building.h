@@ -30,25 +30,19 @@ USTRUCT(BlueprintType)
 struct FWallData
 {
 	GENERATED_BODY()
-
+	
 	UPROPERTY()
 	USplineComponent* SplineComponent = nullptr;
+	UPROPERTY()
+	UProceduralMeshComponent* WallMesh = nullptr;
 	UPROPERTY()
 	TArray<FOpeningData> OpeningData;
 	float Height = 300.f;
 	float Thickness = 100.f;
+	bool bClosed = false;
 
 };
-
-UENUM(BlueprintType)
-enum class ESelectionType : uint8
-{
-	None     UMETA(DisplayName="None"),
-	Wall     UMETA(DisplayName="Wall"),
-	Opening  UMETA(DisplayName="Opening")
-};
-
-
+class USelectionAndHandlesComponent;
 UCLASS()
 class HOMEBUILDER_API ABuilding : public AActor
 {
@@ -71,6 +65,7 @@ public:
 
 	UPROPERTY()
 	TArray<FWallData> Walls;
+	static constexpr float WallStep = 64.f;
 	UPROPERTY(EditAnywhere, Category = "Building|Wall")
 	UMaterialInterface* WallMaterial;
 	// UPROPERTY(EditAnywhere, Category = "Building|Wall")
@@ -92,67 +87,51 @@ public:
 	
 	UPROPERTY(EditAnywhere, Category = "Building|Preview")
 	UMaterialInterface* PreviewMaterial;
-
-	UPROPERTY(EditAnywhere, Category = "Building|Selection")
-	UMaterialInterface* SelectionOutlineMaterial;
-	UPROPERTY(EditAnywhere, Category = "Building|Selection")
-	float SelectionOutlineThickness = 1.f;
-	UPROPERTY(EditAnywhere, Category = "Building|Selection")
-	float SelectionOutlineDashTile = 16.f;
+	
+	UPROPERTY(VisibleAnywhere, Category = "Building|Selection")
+	USelectionAndHandlesComponent* Selection;
 	
 	virtual void BeginPlay() override;
 	virtual void Tick( float DeltaTime) override;
 
 	UFUNCTION()
 	void HandleModeChange(EToolMode NewMode);
+
+	//Building
 	UFUNCTION()
-	void DeleteSelected();
+	void BuildWallMesh(const FWallData& Wall, UProceduralMeshComponent* Target, bool bPreview);
+	UFUNCTION()
+	bool FindWallAtCursor(int32& OutIndex, float& OutKey);
 
 protected:
-	APlayerController* PlayerController;
-	AGameHUD* GameHUD;
+	APlayerController* PlayerController = nullptr;
+	AGameHUD* GameHUD = nullptr;
 	FVector MousePosition;
-
-	//Selection
-	ESelectionType SelectionType = ESelectionType::None;
-	int32 SelectedWallIndex = -1;
-	int32 SelectedOpeningIndex = -1;
-
-	UProceduralMeshComponent* SelectionOutline;
-
-	void SelectAtCursor();
-	void BuildSelectionOutline();
 	
 	//Drawing
-	UProceduralMeshComponent* MeshComponent;
+	UProceduralMeshComponent* MeshComponent = nullptr;
 	USplineComponent* CurrentSpline = nullptr;
-	
 	bool bIsDrawingMode;
-	bool bDirty = false;
+	const float CursorTolerance = 20.f;
 	
 	bool UpdateMousePosition(bool bSnap);
-	
 	void PlacePoint();
 	void DrawingFinished();
 	void DrawingCancelled();
 
 	//Walls && Floor && Roof
-	static constexpr int32 WallPreviewSectionIndex = 1000;
-	static constexpr float WallStep = 50.f;
-
-	bool FindWallAtCursor(int32& OutIndex, float& OutKey);
+	const float FloorZOffset = 2.f;
 	
-	void BuildWallMesh(const FWallData& Wall, int32 SectionIndex);
-	void BuildFloorMesh(const USplineComponent* SplineComponent, int32 SectionIndex);
-	void BuildRoofMesh(const USplineComponent* SplineComponent, const int32 WallHeight, int32 SectionIndex);
+	void RebuildWall(int32 Index);
+	void BuildFloorMesh(const USplineComponent* Spline, UProceduralMeshComponent* Target);
+	void BuildRoofMesh(const USplineComponent* Spline, const int32 WallHeight, UProceduralMeshComponent* Target);
 
 	//Doors && Windows
-	UStaticMeshComponent* OpeningPreview;
-	
-	FTransform TransformMesh(const UStaticMesh* StaticMesh, const USplineComponent* SplineComponent,
-		const FOpeningData& OpeningData, float Thickness);
+	UStaticMeshComponent* OpeningPreview = nullptr;
+	const float OpeningGap = 8.f;
+	const float DoorHeight = 210.f;
+	const float WindowHeight = 120.f;
 
 	bool ComputeOpeningAtCursor(EBuildTool Tool, int32& OutWallIndex, FOpeningData& OutOpeningData, bool& bValid);
 	void PlaceOpening(EBuildTool Tool);
-	bool FindOpeningAt(const FWallData& Wall, float d, float& OutSill, float& OutHead)const;
 };
