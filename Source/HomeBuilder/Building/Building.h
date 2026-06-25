@@ -21,10 +21,9 @@ struct FOpeningData
 	UStaticMeshComponent* OpeningMesh = nullptr;
 	float Distance;
 	float Width = 120.f;
-	float SillHeight = 0.f; //0 - door, ~90 - window
+	float SillHeight = 0.f;
 	float OpeningHeight = 200.f;
-
-	
+	bool bIsDoor = false;
 };
 USTRUCT(BlueprintType)
 struct FWallData
@@ -60,36 +59,36 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Building|Input")
 	UInputAction* IA_Cancel;
 
-	UPROPERTY(EditAnywhere, Category = "Building|Snapping")
-	float SnapGridSize = 128.f;
-
-	UPROPERTY()
+	UPROPERTY(VisibleAnywhere, Category = "Building|Tools|Wall")
 	TArray<FWallData> Walls;
 	static constexpr float WallStep = 64.f;
-	UPROPERTY(EditAnywhere, Category = "Building|Wall")
+	UPROPERTY(EditAnywhere, Category = "Building|Tools|Wall")
 	UMaterialInterface* WallMaterial;
-	// UPROPERTY(EditAnywhere, Category = "Building|Wall")
-	// float WallHeight;
 	
-	UPROPERTY(EditAnywhere, Category = "Building|Floor")
+	UPROPERTY(EditAnywhere, Category = "Building|Tools|Floor")
 	UMaterialInterface* FloorMaterial;
 
-	UPROPERTY(EditAnywhere, Category = "Building|Roof")
+	UPROPERTY(EditAnywhere, Category = "Building|Tools|Roof")
 	UMaterialInterface* RoofMaterial;
-	UPROPERTY(EditAnywhere, Category = "Building|Roof")
+	UPROPERTY(EditAnywhere, Category = "Building|Tools|Roof")
 	float RoofHeight;
-
-	UPROPERTY(EditAnywhere, Category = "Building|Window")
+	
+	UPROPERTY(EditAnywhere, Category = "Building|Tools|Window")
 	UStaticMesh* WindowMesh;
 	
-	UPROPERTY(EditAnywhere, Category = "Building|Door")
+	UPROPERTY(EditAnywhere, Category = "Building|Tools|Door")
 	UStaticMesh* DoorMesh;
 	
 	UPROPERTY(EditAnywhere, Category = "Building|Preview")
 	UMaterialInterface* PreviewMaterial;
 	
-	UPROPERTY(VisibleAnywhere, Category = "Building|Selection")
+	UPROPERTY(VisibleAnywhere)
 	USelectionAndHandlesComponent* Selection;
+
+	UPROPERTY(VisibleAnywhere, Category = "Building|Mesh")
+	UProceduralMeshComponent* MeshComponent = nullptr;
+	UPROPERTY(VisibleAnywhere, Category = "Building|Mesh")
+	UStaticMeshComponent* OpeningPreview = nullptr;
 	
 	virtual void BeginPlay() override;
 	virtual void Tick( float DeltaTime) override;
@@ -97,41 +96,40 @@ public:
 	UFUNCTION()
 	void HandleModeChange(EToolMode NewMode);
 
+	FVector MousePosition;
+	bool UpdateMousePosition();
 	//Building
-	UFUNCTION()
-	void BuildWallMesh(const FWallData& Wall, UProceduralMeshComponent* Target, bool bPreview);
-	UFUNCTION()
 	bool FindWallAtCursor(int32& OutIndex, float& OutKey);
-
+	void BuildWallMesh(const FWallData& Wall, UProceduralMeshComponent* Target, bool bPreview);
+	void RebuildWall(int32 Index);
 protected:
 	APlayerController* PlayerController = nullptr;
 	AGameHUD* GameHUD = nullptr;
-	FVector MousePosition;
 	
 	//Drawing
-	UProceduralMeshComponent* MeshComponent = nullptr;
 	USplineComponent* CurrentSpline = nullptr;
-	bool bIsDrawingMode;
+	bool bIsDrawingMode = false;
 	const float CursorTolerance = 20.f;
+	const float WallCloseTolerance = 128.f;
 	
-	bool UpdateMousePosition(bool bSnap);
 	void PlacePoint();
 	void DrawingFinished();
 	void DrawingCancelled();
+	void TickWallPreview();
+	void TickOpeningPreview();
 
 	//Walls && Floor && Roof
 	const float FloorZOffset = 2.f;
 	
-	void RebuildWall(int32 Index);
 	void BuildFloorMesh(const USplineComponent* Spline, UProceduralMeshComponent* Target);
 	void BuildRoofMesh(const USplineComponent* Spline, const int32 WallHeight, UProceduralMeshComponent* Target);
 
 	//Doors && Windows
-	UStaticMeshComponent* OpeningPreview = nullptr;
 	const float OpeningGap = 8.f;
 	const float DoorHeight = 210.f;
 	const float WindowHeight = 120.f;
 
 	bool ComputeOpeningAtCursor(EBuildTool Tool, int32& OutWallIndex, FOpeningData& OutOpeningData, bool& bValid);
+	bool OpeningOverlaps(const FWallData& Wall, float Distance, float HalfWidth)const;
 	void PlaceOpening(EBuildTool Tool);
 };

@@ -48,5 +48,6 @@ enum class ESelectionType : uint8
 	Wall     UMETA(DisplayName="Wall"),
 	Opening  UMETA(DisplayName="Opening")
 };
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnModeChanged, EToolMode, NewMode);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnDeleteRequested);

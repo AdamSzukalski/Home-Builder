@@ -5,10 +5,8 @@
 #include "EnhancedInputComponent.h"
 #include "GameHUD.h"
 #include "EnhancedInputSubsystems.h"
-#include "DrawDebugHelpers.h"
 #include "SelectionAndHandlesComponent.h"
 #include "Engine/StaticMesh.h"
-
 
 ABuilding::ABuilding()
 {
@@ -39,6 +37,7 @@ void ABuilding::BeginPlay()
 	UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(InputComponent);
 	if (!EnhancedInputComponent) return;
 	EnhancedInputComponent->BindAction(IA_PlacePoint, ETriggerEvent::Started, this, &ABuilding::PlacePoint);
+	EnhancedInputComponent->BindAction(IA_PlacePoint, ETriggerEvent::Completed, Selection, &USelectionAndHandlesComponent::EndHandleDrag);
 	EnhancedInputComponent->BindAction(IA_Commit, ETriggerEvent::Completed, this, &ABuilding::DrawingFinished);
 	EnhancedInputComponent->BindAction(IA_Cancel, ETriggerEvent::Completed, this, &ABuilding::DrawingCancelled);
 
@@ -53,35 +52,15 @@ void ABuilding::BeginPlay()
 void ABuilding::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-
-	if (bIsDrawingMode && CurrentSpline && CurrentSpline->GetNumberOfSplinePoints() >= 1)
-	{
-		UpdateMousePosition(true);
-		
-		CurrentSpline->AddSplinePoint(MousePosition, ESplineCoordinateSpace::World);
-		BuildWallMesh(FWallData{CurrentSpline}, MeshComponent, true);
-		CurrentSpline->RemoveSplinePoint(CurrentSpline->GetNumberOfSplinePoints() - 1);
-	}
 	if (!GameHUD) return;
-	if (GameHUD->CurrentBuildTool == EBuildTool::Door || GameHUD->CurrentBuildTool == EBuildTool::Window)
+
+	OpeningPreview->SetVisibility(false);
+	switch (GameHUD->CurrentBuildTool)
 	{
-		int32 WallIndex;
-		FOpeningData OpeningData;
-		bool bValid;
-		if (!ComputeOpeningAtCursor(GameHUD->CurrentBuildTool, WallIndex, OpeningData, bValid))
-			OpeningPreview->SetVisibility(false);
-		else if (bValid)
-		{
-			UStaticMesh* Mesh = (GameHUD->CurrentBuildTool == EBuildTool::Door) ? DoorMesh : WindowMesh;
-			OpeningPreview->SetStaticMesh(Mesh);
-			OpeningPreview->SetWorldTransform(FBuildingMesh::TransformMesh(OpeningPreview->GetStaticMesh(),
-				Walls[WallIndex].SplineComponent, OpeningData, Walls[WallIndex].Thickness));
-			OpeningPreview->SetVisibility(true);
-		}
-	}
-	else
-	{
-		OpeningPreview->SetVisibility(false);
+		case EBuildTool::Wall: TickWallPreview(); break;
+		case EBuildTool::Door:
+		case EBuildTool::Window: TickOpeningPreview(); break;
+		default: break;
 	}
 }
 void ABuilding::HandleModeChange(EToolMode NewMode)
@@ -104,7 +83,7 @@ void ABuilding::HandleModeChange(EToolMode NewMode)
 	SetActorTickEnabled(true);
 }
 //Drawing
-bool ABuilding::UpdateMousePosition(bool bSnap)
+bool ABuilding::UpdateMousePosition()
 {
 	if (!PlayerController) return false;
 	
@@ -124,23 +103,22 @@ bool ABuilding::UpdateMousePosition(bool bSnap)
 	
 	if (bHit)
 	{
-		if (bSnap)
-			MousePosition = FVector(
-				FMath::GridSnap(Hit.ImpactPoint.X, SnapGridSize),
-				FMath::GridSnap(Hit.ImpactPoint.Y, SnapGridSize),
-				Hit.ImpactPoint.Z);
-		else
-			MousePosition = Hit.ImpactPoint;
+		MousePosition = Hit.ImpactPoint;
 	}
 	return bHit;
 }
 void ABuilding::PlacePoint()
 {
 	if (!GameHUD) return;
-	bIsDrawingMode = true;
-	if (!UpdateMousePosition(true)) return;
+	if (GameHUD->CurrentBuildTool == EBuildTool::None)
+    	{
+    		if (!Selection->TryBeginHandleDrag()) Selection->SelectAtCursor();
+    		return;
+    	}
 	if (GameHUD->CurrentBuildTool == EBuildTool::Wall)
 	{
+		if (!UpdateMousePosition()) return;
+		bIsDrawingMode = true;
 		if (CurrentSpline == nullptr)
 		{
 			CurrentSpline = NewObject<USplineComponent>(this);
@@ -158,7 +136,6 @@ void ABuilding::PlacePoint()
 	{
 		PlaceOpening(GameHUD->CurrentBuildTool);
 	}
-	else if (GameHUD->CurrentBuildTool == EBuildTool::None){Selection->SelectAtCursor(); return;}
 }
 void ABuilding::DrawingFinished()
 {
@@ -175,7 +152,7 @@ void ABuilding::DrawingFinished()
 	FVector FirstPointLocation = CurrentSpline->GetLocationAtSplinePoint(0, ESplineCoordinateSpace::World);
 	FVector LastPointLocation  = CurrentSpline->GetLocationAtSplinePoint(
 						CurrentSpline->GetNumberOfSplinePoints() - 1, ESplineCoordinateSpace::World);
-	if (FVector::DistXY(FirstPointLocation, LastPointLocation)< SnapGridSize)
+	if (FVector::DistXY(FirstPointLocation, LastPointLocation)< WallCloseTolerance)
 	{
 		Walls.Last().bClosed = true;
 	}
@@ -191,10 +168,31 @@ void ABuilding::DrawingCancelled()
 	CurrentSpline = nullptr;
 	MeshComponent->ClearMeshSection(0);
 }
+void ABuilding::TickWallPreview()
+{
+	if (bIsDrawingMode && CurrentSpline && CurrentSpline->GetNumberOfSplinePoints() >= 1)
+	{
+		UpdateMousePosition();
+		CurrentSpline->AddSplinePoint(MousePosition, ESplineCoordinateSpace::World);
+		BuildWallMesh(FWallData{CurrentSpline}, MeshComponent, true);
+		CurrentSpline->RemoveSplinePoint(CurrentSpline->GetNumberOfSplinePoints() - 1);
+	}
+}
+void ABuilding::TickOpeningPreview()
+{
+	int32 WallIndex; FOpeningData OpeningData; bool bValid;
+	if (!ComputeOpeningAtCursor(GameHUD->CurrentBuildTool, WallIndex, OpeningData, bValid)) return;
+	if (!bValid) return;
+	UStaticMesh* Mesh = (GameHUD->CurrentBuildTool == EBuildTool::Door) ? DoorMesh : WindowMesh;
+	OpeningPreview->SetStaticMesh(Mesh);
+	OpeningPreview->SetWorldTransform(FBuildingMesh::TransformMesh(OpeningPreview->GetStaticMesh(),
+	Walls[WallIndex].SplineComponent, OpeningData, Walls[WallIndex].Thickness));
+	OpeningPreview->SetVisibility(true);
+}
 //Wall && Floor
 bool ABuilding::FindWallAtCursor(int32& OutIndex, float& OutKey)
 {
-	if (!UpdateMousePosition(false))
+	if (!UpdateMousePosition())
 	{
 		return false;
 	}
@@ -220,14 +218,14 @@ bool ABuilding::FindWallAtCursor(int32& OutIndex, float& OutKey)
 	OutKey = BestSplineKey;
 	return true;
 }
-void ABuilding::RebuildWall(int32 SectionIndex)
+void ABuilding::RebuildWall(int32 Index)
 {
-	UProceduralMeshComponent* M = Walls[SectionIndex].WallMesh;
-	BuildWallMesh(Walls[SectionIndex], M, false);
-	if (Walls[SectionIndex].bClosed)
+	UProceduralMeshComponent* M = Walls[Index].WallMesh;
+	BuildWallMesh(Walls[Index], M, false);
+	if (Walls[Index].bClosed)
 	{
-		BuildFloorMesh(Walls[SectionIndex].SplineComponent, M);
-		BuildRoofMesh(Walls[SectionIndex].SplineComponent, Walls[SectionIndex].Height, M);
+		BuildFloorMesh(Walls[Index].SplineComponent, M);
+		BuildRoofMesh(Walls[Index].SplineComponent, Walls[Index].Height, M);
 	}
 }
 void ABuilding::BuildWallMesh(const FWallData& Wall, UProceduralMeshComponent* Target, bool bPreview)
@@ -278,39 +276,10 @@ bool ABuilding::ComputeOpeningAtCursor(EBuildTool Tool, int32& OutWallIndex, FOp
 	float Length = SplineComponent->GetSplineLength();
 	float HalfWidth = OpeningData.Width / 2.f;
 	if (Length < OpeningData.Width) return false;
-	OpeningData.Distance = FMath::Clamp(OpeningData.Distance, HalfWidth, Length - HalfWidth);
 	
 	//Make the Openings not Overlap
-	bValid = true;
-	for (const FOpeningData& O : Walls[BestWallIndex].OpeningData)
-	{
-			
-		float OHalf = O.Width /2.f;
-		float MinCenterToCenter = HalfWidth + OHalf + OpeningGap;
-		if (FMath::Abs(OpeningData.Distance - O.Distance) < MinCenterToCenter)
-		{
-			if (OpeningData.Distance < O.Distance)
-				OpeningData.Distance = O.Distance - MinCenterToCenter;
-			else
-				OpeningData.Distance = O.Distance + MinCenterToCenter;
-			
-		}
-	}
 	OpeningData.Distance = FMath::Clamp(OpeningData.Distance, HalfWidth, Length - HalfWidth);
-	
-	float NewStart = OpeningData.Distance - HalfWidth;
-	float NewEnd = OpeningData.Distance + HalfWidth;
-	for (const FOpeningData& O : Walls[BestWallIndex].OpeningData)
-	{
-			
-		float OHalf = O.Width /2.f;
-		if (NewStart < O.Distance + (OHalf + OpeningGap) && NewEnd > O.Distance - (OHalf + OpeningGap))
-		{
-			bValid = false;
-			break;
-		}
-	}
-	
+	bValid = !OpeningOverlaps(Walls[BestWallIndex], OpeningData.Distance, HalfWidth);
 	
 	float BaseZ = SplineComponent->GetLocationAtDistanceAlongSpline(OpeningData.Distance, ESplineCoordinateSpace::World).Z;
 	float ClickHeight = MousePosition.Z - BaseZ;
@@ -325,12 +294,22 @@ bool ABuilding::ComputeOpeningAtCursor(EBuildTool Tool, int32& OutWallIndex, FOp
 	OutOpeningData = OpeningData;
 	return true;
 }
+bool ABuilding::OpeningOverlaps(const FWallData& Wall, float Distance, float HalfWidth) const
+{
+	for (const FOpeningData& O : Wall.OpeningData)
+	{
+		if (FMath::Abs(Distance - O.Distance) < HalfWidth + O.Width / 2.f + OpeningGap)
+			return true;
+	}
+	return false;
+}
 void ABuilding::PlaceOpening(EBuildTool Tool)
 {
 	int32 WallIndex;
 	FOpeningData OpeningData;
 	bool bValid;
-	if (!ComputeOpeningAtCursor(Tool, WallIndex, OpeningData, bValid)) return;
+	if (!ComputeOpeningAtCursor(Tool, WallIndex, OpeningData, bValid) || !bValid) return;
+	OpeningData.bIsDoor = (Tool == EBuildTool::Door);
 
 	UStaticMeshComponent* OpeningMesh=  NewObject<UStaticMeshComponent>(this);
 	OpeningMesh->SetupAttachment(RootComponent);
@@ -345,4 +324,5 @@ void ABuilding::PlaceOpening(EBuildTool Tool)
 
 	BuildWallMesh(Walls[WallIndex], Walls[WallIndex].WallMesh, false);
 }
+
 
