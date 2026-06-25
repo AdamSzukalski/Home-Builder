@@ -123,17 +123,17 @@ namespace FBuildingMesh
 
 			FVector La = B.Vertices[r0+0], Ra = B.Vertices[r0+1];  // ground corners (your precomputed bottom verts)
 			FVector Lb = B.Vertices[r1+0], Rb = B.Vertices[r1+1];
-
-			float Sill, Head;
-			if (FindOpeningAt(Wall, dMid, Sill, Head))
+			
+			TArray<FVector2D>Gaps;
+			FindOpeningsAt(Wall, dMid, Gaps);
+			Gaps.Sort([](const FVector2D& A, const FVector2D& B){return A.X < B.X;});
+			float z = 0.f;
+			for (const FVector2D& G : Gaps)
 			{
-				AddPanel(La, Ra, Lb, Rb, 0.f,  Sill,   false,  false); // below: top cap = windowsill
-				AddPanel(La, Ra, Lb, Rb, Head, Height, true,  false);  // above: top = wall top, bottom = lintel
+				if (G.X > z) AddPanel(La, Ra, Lb, Rb, z,  G.X,   false,  false);
+				z = FMath::Max(z, G.Y);
 			}
-			else
-			{
-				AddPanel(La, Ra, Lb, Rb, 0.f, Height, true, false);   // solid: full height
-			}
+			if (z < Height) AddPanel(La, Ra, Lb, Rb, z, Height, true,  false);
 		}
 		const int32 LastRing = (Samples.Num() - 1) *4;
 		AddQuad(0,1,2,3);
@@ -275,19 +275,26 @@ namespace FBuildingMesh
 		Transform.SetScale3D(FVector((Thickness + 2.f)/Native.X, Opening.Width/Native.Y, Opening.OpeningHeight/Native.Z));
 		return Transform;
 	}
-	bool FindOpeningAt(const FWallData& Wall, float d, float& OutSill, float& OutHead)
+	bool OpeningFits(const FWallData& Wall, const FOpeningData& O)
+	{
+		if (!Wall.SplineComponent) return false;
+		const float Length = Wall.SplineComponent->GetSplineLength();
+		const float HalfWidth = O.Width * 0.5f;
+		return (O.SillHeight + O.OpeningHeight <= Wall.Height)
+			&& (O.Distance - HalfWidth >= 0.f)
+			&& (O.Distance + HalfWidth <= Length);
+	}
+	void FindOpeningsAt(const FWallData& Wall, float d, TArray<FVector2D>& OutGaps)
 	{
     	for (const FOpeningData& O : Wall.OpeningData)
     	{
+    		if (!OpeningFits(Wall, O)) continue;
     		float HalfWidth = O.Width / 2.f;
     		if (d >= O.Distance - HalfWidth && d <= O.Distance + HalfWidth)
     		{
-    			OutSill = O.SillHeight;
-    			OutHead = O.SillHeight + O.OpeningHeight;
-    			return true;
+    			OutGaps.Add(FVector2D(O.SillHeight, O.SillHeight + O.OpeningHeight));
     		}
     	}
-    	return false;
 	}
 	FMeshBuffers BuildWallOutline(const FWallData& Wall, FVector CamLocal, float Thickness,
 		float Height, float DashTile, float WallStep)

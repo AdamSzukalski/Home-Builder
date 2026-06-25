@@ -102,6 +102,8 @@ public:
 	bool FindWallAtCursor(int32& OutIndex, float& OutKey);
 	void BuildWallMesh(const FWallData& Wall, UProceduralMeshComponent* Target, bool bPreview);
 	void RebuildWall(int32 Index);
+	bool OpeningOverlaps(const FWallData& Wall, float Distance, float HalfWidth, float Sill, float Head,
+	int32 IgnoreIndex = -1)const;
 protected:
 	APlayerController* PlayerController = nullptr;
 	AGameHUD* GameHUD = nullptr;
@@ -130,6 +132,5 @@ protected:
 	const float WindowHeight = 120.f;
 
 	bool ComputeOpeningAtCursor(EBuildTool Tool, int32& OutWallIndex, FOpeningData& OutOpeningData, bool& bValid);
-	bool OpeningOverlaps(const FWallData& Wall, float Distance, float HalfWidth)const;
 	void PlaceOpening(EBuildTool Tool);
 };

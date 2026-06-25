@@ -34,6 +34,9 @@ void USelectionAndHandlesComponent::TickComponent(float DeltaTime, enum ELevelTi
 		USplineComponent* Spline = Owner->Walls[SelectedWallIndex].SplineComponent;
 		int32 NumPoints = Spline->GetNumberOfSplinePoints();
 		float PlaneZ = Spline->GetLocationAtSplinePoint(0, ESplineCoordinateSpace::World).Z;
+		FOpeningData Saved;
+		if (SelectionType == ESelectionType::Opening)
+			Saved = Owner->Walls[SelectedWallIndex].OpeningData[SelectedOpeningIndex];
 		switch (HandleTypes[DraggedPointIndex])
 		{
 			case EHandleType::Corner:
@@ -149,11 +152,11 @@ void USelectionAndHandlesComponent::TickComponent(float DeltaTime, enum ELevelTi
 		}
 		if (SelectionType == ESelectionType::Opening)
 		{
-			Owner->RebuildWall(SelectedWallIndex);
 			FOpeningData& O = Owner->Walls[SelectedWallIndex].OpeningData[SelectedOpeningIndex];
-			if (O.OpeningMesh)
-				O.OpeningMesh->SetWorldTransform(FBuildingMesh::TransformMesh(
-					O.OpeningMesh->GetStaticMesh(), Spline, O, Owner->Walls[SelectedWallIndex].Thickness));
+			if (Owner->OpeningOverlaps(Owner->Walls[SelectedWallIndex], O.Distance, O.Width / 2.f,
+				O.SillHeight, O.SillHeight + O.OpeningHeight, SelectedOpeningIndex))
+				O = Saved;
+			Owner->RebuildWall(SelectedWallIndex);
 		}
 		RefreshHandles();
 		if (Handles.IsValidIndex(DraggedPointIndex))

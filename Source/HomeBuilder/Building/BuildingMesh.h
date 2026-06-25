@@ -23,7 +23,8 @@ namespace FBuildingMesh
 	FMeshBuffers BuildRoof(const USplineComponent* Spline, int32 WallHeight, float RoofHeight);
 	FTransform TransformMesh(const UStaticMesh* Mesh, const USplineComponent* Spline,
 		const FOpeningData& Opening, float Thickness);
-	bool FindOpeningAt(const FWallData& Wall, float d, float& OutSill, float& OutHead);
+	void FindOpeningsAt(const FWallData& Wall, float d, TArray<FVector2D>& OutGaps);
+	bool OpeningFits(const FWallData& Wall, const FOpeningData& O);
 	FMeshBuffers BuildWallOutline(const FWallData& Wall, FVector CamLocal, float Thickness,
 		float Height, float DashTile, float WallStep);
 	FMeshBuffers BuildOpeningOutline(const FOpeningData& Opening, const USplineComponent* Spline,

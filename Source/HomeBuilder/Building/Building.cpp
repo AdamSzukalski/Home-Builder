@@ -222,6 +222,15 @@ void ABuilding::RebuildWall(int32 Index)
 {
 	UProceduralMeshComponent* M = Walls[Index].WallMesh;
 	BuildWallMesh(Walls[Index], M, false);
+	for (auto& O : Walls[Index].OpeningData)
+	{
+		if (!O.OpeningMesh) continue;
+		bool bFits = FBuildingMesh::OpeningFits(Walls[Index], O);
+		O.OpeningMesh->SetVisibility(bFits);
+		if (bFits == false) continue;
+		O.OpeningMesh->SetWorldTransform(FBuildingMesh::TransformMesh(O.OpeningMesh->GetStaticMesh(), Walls[Index].SplineComponent,
+			O, Walls[Index].Thickness));
+	}
 	if (Walls[Index].bClosed)
 	{
 		BuildFloorMesh(Walls[Index].SplineComponent, M);
@@ -277,9 +286,7 @@ bool ABuilding::ComputeOpeningAtCursor(EBuildTool Tool, int32& OutWallIndex, FOp
 	float HalfWidth = OpeningData.Width / 2.f;
 	if (Length < OpeningData.Width) return false;
 	
-	//Make the Openings not Overlap
 	OpeningData.Distance = FMath::Clamp(OpeningData.Distance, HalfWidth, Length - HalfWidth);
-	bValid = !OpeningOverlaps(Walls[BestWallIndex], OpeningData.Distance, HalfWidth);
 	
 	float BaseZ = SplineComponent->GetLocationAtDistanceAlongSpline(OpeningData.Distance, ESplineCoordinateSpace::World).Z;
 	float ClickHeight = MousePosition.Z - BaseZ;
@@ -289,16 +296,21 @@ bool ABuilding::ComputeOpeningAtCursor(EBuildTool Tool, int32& OutWallIndex, FOp
 	}
 	OpeningData.SillHeight = Sill;
 	OpeningData.OpeningHeight = OpeningHeight;
-
+	//Make the Openings not Overlap
+	bValid = !OpeningOverlaps(Walls[BestWallIndex], OpeningData.Distance, HalfWidth, OpeningData.SillHeight,
+		OpeningData.SillHeight + OpeningData.OpeningHeight);
 	OutWallIndex = BestWallIndex;
 	OutOpeningData = OpeningData;
 	return true;
 }
-bool ABuilding::OpeningOverlaps(const FWallData& Wall, float Distance, float HalfWidth) const
+bool ABuilding::OpeningOverlaps(const FWallData& Wall, float Distance, float HalfWidth, float Sill, float Head, int32 IgnoreIndex) const
 {
-	for (const FOpeningData& O : Wall.OpeningData)
+	for (int i = 0; i < Wall.OpeningData.Num(); i++)
 	{
-		if (FMath::Abs(Distance - O.Distance) < HalfWidth + O.Width / 2.f + OpeningGap)
+		if (i == IgnoreIndex) continue;
+		const FOpeningData& O = Wall.OpeningData[i];
+		if (FMath::Abs(Distance - O.Distance) < HalfWidth + O.Width / 2.f + OpeningGap &&
+		Sill < (O.SillHeight + O.OpeningHeight) + OpeningGap && O.SillHeight < Head + OpeningGap)
 			return true;
 	}
 	return false;
