@@ -474,11 +474,33 @@ bool USelectionAndHandlesComponent::TryBeginHandleDrag()
 }
 void USelectionAndHandlesComponent::EndHandleDrag()
 {
+	bool bEndpointCorner = false;
+	if (bDragging && SelectionType == ESelectionType::Wall
+		&& HandleTypes.IsValidIndex(DraggedPointIndex)
+		&& HandleTypes[DraggedPointIndex] == EHandleType::Corner
+		&& Owner->Walls.IsValidIndex(SelectedWallIndex)
+		&& Owner->Walls[SelectedWallIndex].SplineComponent)
+	{
+		int32 NumPoints = Owner->Walls[SelectedWallIndex].SplineComponent->GetNumberOfSplinePoints();
+		bEndpointCorner = (DraggedPointIndex == 0 || DraggedPointIndex == NumPoints - 1);
+	}
+
 	if (Handles.IsValidIndex(DraggedPointIndex))
 		Handles[DraggedPointIndex]->SetWorldScale3D(FVector(HandleScale));
 	bDragging = false;
 	DraggedPointIndex = -1;
 	HoveredHandleIndex = -1;
+
+	if (bEndpointCorner)
+	{
+		int32 Survivor = Owner->TryMergeWalls(SelectedWallIndex);
+		if (Survivor != -1)
+		{
+			SelectedWallIndex = Survivor;
+			RefreshHandles();
+			BuildSelectionOutline();
+		}
+	}
 }
 
 

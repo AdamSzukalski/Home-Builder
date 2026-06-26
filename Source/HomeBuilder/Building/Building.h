@@ -102,6 +102,7 @@ public:
 	bool FindWallAtCursor(int32& OutIndex, float& OutKey);
 	void BuildWallMesh(const FWallData& Wall, UProceduralMeshComponent* Target, bool bPreview);
 	void RebuildWall(int32 Index);
+	int32 TryMergeWalls(int32 MovedIndex);
 	bool OpeningOverlaps(const FWallData& Wall, float Distance, float HalfWidth, float Sill, float Head,
 	int32 IgnoreIndex = -1)const;
 protected:

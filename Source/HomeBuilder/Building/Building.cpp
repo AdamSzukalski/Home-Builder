@@ -7,6 +7,7 @@
 #include "EnhancedInputSubsystems.h"
 #include "SelectionAndHandlesComponent.h"
 #include "Engine/StaticMesh.h"
+#include "Algo/Reverse.h"
 
 ABuilding::ABuilding()
 {
@@ -156,7 +157,7 @@ void ABuilding::DrawingFinished()
 	{
 		Walls.Last().bClosed = true;
 	}
-	RebuildWall(Walls.Num()-1);
+	if (TryMergeWalls(Walls.Num() - 1) == -1) RebuildWall(Walls.Num() - 1);
 	CurrentSpline = nullptr;
 	MeshComponent->ClearMeshSection(0);
 }
@@ -236,6 +237,88 @@ void ABuilding::RebuildWall(int32 Index)
 		BuildFloorMesh(Walls[Index].SplineComponent, M);
 		BuildRoofMesh(Walls[Index].SplineComponent, Walls[Index].Height, M);
 	}
+}
+int32 ABuilding::TryMergeWalls(int32 MovedIndex)
+{
+	if (!Walls.IsValidIndex(MovedIndex) || !Walls[MovedIndex].SplineComponent || Walls[MovedIndex].bClosed)
+		return -1;
+
+	USplineComponent* NewSpline = Walls[MovedIndex].SplineComponent;
+	const int32 NewNum = NewSpline->GetNumberOfSplinePoints();
+	const FVector NewStart = NewSpline->GetLocationAtSplinePoint(0, ESplineCoordinateSpace::World);
+	const FVector NewEnd   = NewSpline->GetLocationAtSplinePoint(NewNum - 1, ESplineCoordinateSpace::World);
+	
+	int32 BestIndex = -1;
+	for (int32 w = 0; w < Walls.Num(); w++)
+	{
+		if (w == MovedIndex || Walls[w].bClosed || !Walls[w].SplineComponent) continue;
+		USplineComponent* WSpline = Walls[w].SplineComponent;
+		const int32 WNum = WSpline->GetNumberOfSplinePoints();
+		const FVector wS = WSpline->GetLocationAtSplinePoint(0, ESplineCoordinateSpace::World);
+		const FVector wE = WSpline->GetLocationAtSplinePoint(WNum - 1, ESplineCoordinateSpace::World);
+
+		if (FVector::DistXY(NewStart, wS) < WallCloseTolerance ||
+			FVector::DistXY(NewStart, wE) < WallCloseTolerance ||
+			FVector::DistXY(NewEnd,   wS) < WallCloseTolerance ||
+			FVector::DistXY(NewEnd,   wE) < WallCloseTolerance)
+		{
+			BestIndex = w;
+			break;
+		}
+	}
+	if (BestIndex == -1) return -1;
+
+	FWallData& Keep  = Walls[BestIndex];
+	FWallData& Moved = Walls[MovedIndex];
+	USplineComponent* KeepSpline = Keep.SplineComponent;
+	const FVector wStart = KeepSpline->GetLocationAtSplinePoint(0, ESplineCoordinateSpace::World);
+	const FVector wEnd   = KeepSpline->GetLocationAtSplinePoint(
+		KeepSpline->GetNumberOfSplinePoints() - 1, ESplineCoordinateSpace::World);
+
+	TArray<FVector> Combined;
+	for (int32 i = 0; i < KeepSpline->GetNumberOfSplinePoints(); i++)
+		Combined.Add(KeepSpline->GetLocationAtSplinePoint(i, ESplineCoordinateSpace::World));
+	const bool bWStartIsJoint =
+		FMath::Min(FVector::DistXY(wStart, NewStart), FVector::DistXY(wStart, NewEnd)) < WallCloseTolerance;
+	if (bWStartIsJoint) Algo::Reverse(Combined);       
+
+	TArray<FVector> NewPoints;
+	for (int32 i = 0; i < NewNum; i++)
+		NewPoints.Add(NewSpline->GetLocationAtSplinePoint(i, ESplineCoordinateSpace::World));
+	const bool bNewStartIsJoint =
+		FMath::Min(FVector::DistXY(NewStart, wStart), FVector::DistXY(NewStart, wEnd)) < WallCloseTolerance;
+	if (!bNewStartIsJoint) Algo::Reverse(NewPoints);    
+
+	for (int32 i = 1; i < NewPoints.Num(); i++)
+		Combined.Add(NewPoints[i]);                        
+	
+	TArray<FVector> OpeningWorld;
+	for (const FOpeningData& O : Keep.OpeningData)
+		OpeningWorld.Add(KeepSpline->GetLocationAtDistanceAlongSpline(O.Distance, ESplineCoordinateSpace::World));
+	for (const FOpeningData& O : Moved.OpeningData)
+		OpeningWorld.Add(NewSpline->GetLocationAtDistanceAlongSpline(O.Distance, ESplineCoordinateSpace::World));
+
+	KeepSpline->ClearSplinePoints();
+	for (const FVector& P : Combined)
+		KeepSpline->AddSplinePoint(P, ESplineCoordinateSpace::World);
+
+	Keep.OpeningData.Append(Moved.OpeningData);
+	for (int32 k = 0; k < Keep.OpeningData.Num(); k++)
+	{
+		const float Key = KeepSpline->FindInputKeyClosestToWorldLocation(OpeningWorld[k]);
+		Keep.OpeningData[k].Distance = KeepSpline->GetDistanceAlongSplineAtSplineInputKey(Key);
+	}
+	
+	if (FVector::DistXY(Combined[0], Combined.Last()) < WallCloseTolerance)
+		Keep.bClosed = true;
+	
+	Moved.SplineComponent->DestroyComponent();
+	Moved.WallMesh->DestroyComponent();
+	Walls.RemoveAt(MovedIndex);
+	
+	const int32 Survivor = (MovedIndex < BestIndex) ? BestIndex - 1 : BestIndex;
+	RebuildWall(Survivor);
+	return Survivor;
 }
 void ABuilding::BuildWallMesh(const FWallData& Wall, UProceduralMeshComponent* Target, bool bPreview)
 {
