@@ -37,8 +37,10 @@ void UHudUI::UpdateButtons()
 	ApplyTextureButtonStyle(Buttons.FindRef("Pavement"), GameHUD->CurrentPaintTexture == EPaintTexture::Pavement);
 	ApplyTextureButtonStyle(Buttons.FindRef("Rocks"), GameHUD->CurrentPaintTexture == EPaintTexture::Rocks);
 	ApplyTextureButtonStyle(Buttons.FindRef("Sand"), GameHUD->CurrentPaintTexture == EPaintTexture::Sand);
+	
+	Buttons.FindRef("RoundedWalls")->SetVisibility(GameHUD->CurrentBuildTool == EBuildTool::Wall? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	ApplyButtonStyle(Buttons.FindRef("RoundedWalls"), GameHUD->bRoundedWalls == true);
 }
-
 void UHudUI::ApplyButtonStyle(UButton* Button, bool bIsActive)
 {
 	if (!Button) return;

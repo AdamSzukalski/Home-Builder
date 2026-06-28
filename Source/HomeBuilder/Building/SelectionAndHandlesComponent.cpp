@@ -44,7 +44,21 @@ void USelectionAndHandlesComponent::TickComponent(float DeltaTime, enum ELevelTi
 					FVector P;
 					if (!GetCursorOnPlane(FVector(0,0,PlaneZ), FVector::UpVector, P)) return;
 					P.Z = PlaneZ;
-					Spline->SetLocationAtSplinePoint(DraggedPointIndex, P, ESplineCoordinateSpace::World, true);
+					int32 LocalPt = HandleLocalIndex[DraggedPointIndex];
+					FWallJunction* J = nullptr;
+					for (FWallJunction& Jn : Owner->Walls[SelectedWallIndex].Junctions)
+						if (Jn.PointIndex == LocalPt) { J = &Jn; break; }
+					if (J && Owner->Walls.IsValidIndex(J->TargetWall) && Owner->Walls[J->TargetWall].SplineComponent)
+					{
+						// junction corner: slide along the wall it's attached to so it stays connected
+						USplineComponent* T = Owner->Walls[J->TargetWall].SplineComponent;
+						float Key = T->FindInputKeyClosestToWorldLocation(P);
+						J->TargetDistance = T->GetDistanceAlongSplineAtSplineInputKey(Key);
+						FVector C = T->GetLocationAtSplineInputKey(Key, ESplineCoordinateSpace::World);
+						Spline->SetLocationAtSplinePoint(LocalPt, C, ESplineCoordinateSpace::World, true);
+					}
+					else
+						Spline->SetLocationAtSplinePoint(LocalPt, P, ESplineCoordinateSpace::World, true);
 					Owner->RebuildWall(SelectedWallIndex);
 					break;
 			}
@@ -52,7 +66,7 @@ void USelectionAndHandlesComponent::TickComponent(float DeltaTime, enum ELevelTi
 			{
 					FVector P;
 					if (!GetCursorOnPlane(FVector(0,0,PlaneZ), FVector::UpVector, P)) return;
-					int32 Seg = DraggedPointIndex - NumPoints;
+					int32 Seg = HandleLocalIndex[DraggedPointIndex];
 					int32 A = Seg;int32 B = (Seg + 1)	% NumPoints;
 					FVector Delta = P - LastDragPoint;
 					for (int32 Idx : {A, B})
@@ -67,11 +81,12 @@ void USelectionAndHandlesComponent::TickComponent(float DeltaTime, enum ELevelTi
 			}
 			case EHandleType::HeightKnob:
 			{
-					FVector Base = HeightSliderBase();
+					FVector Base = HeightSliderBase(SelectedWallIndex);
 					float HeightAlong;
 					if (!GetCursorOnAxis(Base, FVector::UpVector, HeightAlong)) break;
-					Owner->Walls[SelectedWallIndex].Height = FMath::Clamp(HeightAlong, 100.f, 600.f);
-					Owner->RebuildWall(SelectedWallIndex);
+					float NewHeight = FMath::Clamp(HeightAlong, 100.f, 600.f);
+					for (int32 wi : SelectedWalls)
+						if (Owner->Walls.IsValidIndex(wi)) { Owner->Walls[wi].Height = NewHeight; Owner->RebuildWall(wi); }
 					break;
 			}
 			case EHandleType::OpeningMove:
@@ -158,6 +173,8 @@ void USelectionAndHandlesComponent::TickComponent(float DeltaTime, enum ELevelTi
 				O = Saved;
 			Owner->RebuildWall(SelectedWallIndex);
 		}
+		if (SelectionType == ESelectionType::Wall)
+			Owner->ResolveAllJunctions();
 		RefreshHandles();
 		if (Handles.IsValidIndex(DraggedPointIndex))
 			Handles[DraggedPointIndex]->SetWorldScale3D(FVector(HandleScale * HandleScaleUpsizeOnHover));
@@ -187,13 +204,19 @@ void USelectionAndHandlesComponent::DeleteSelected()
 	if (SelectionType == ESelectionType::None) return;
 	if (SelectionType == ESelectionType::Wall)
 	{
-		for (const auto& OpeningData : Owner->Walls[SelectedWallIndex].OpeningData)
+		TArray<int32> ToDelete = SelectedWalls;
+		ToDelete.Sort();
+		for (int32 n = ToDelete.Num() - 1; n >= 0; n--)
 		{
-			OpeningData.OpeningMesh->DestroyComponent();
+			int32 idx = ToDelete[n];
+			if (!Owner->Walls.IsValidIndex(idx)) continue;
+			for (const auto& OpeningData : Owner->Walls[idx].OpeningData)
+				if (OpeningData.OpeningMesh) OpeningData.OpeningMesh->DestroyComponent();
+			if (Owner->Walls[idx].WallMesh) Owner->Walls[idx].WallMesh->DestroyComponent();
+			if (Owner->Walls[idx].SplineComponent) Owner->Walls[idx].SplineComponent->DestroyComponent();
+			Owner->Walls.RemoveAt(idx);
+			Owner->FixJunctionsAfterRemove(idx);
 		}
-		Owner->Walls[SelectedWallIndex].WallMesh->DestroyComponent();
-		Owner->Walls[SelectedWallIndex].SplineComponent->DestroyComponent();
-		Owner->Walls.RemoveAt(SelectedWallIndex);
 	}
 	else if(SelectionType == ESelectionType::Opening)
 	{
@@ -206,6 +229,17 @@ void USelectionAndHandlesComponent::DeleteSelected()
 	SelectedOpeningIndex = -1;
 	BuildSelectionOutline();
 	RefreshHandles();
+}
+void USelectionAndHandlesComponent::DeleteHoveredCorner()
+{
+	if (!Owner->Walls.IsValidIndex(ContextWallIndex)) return;
+	Owner->DeleteCorner(ContextWallIndex, ContextPointIndex);
+	if (Owner->Walls.IsValidIndex(SelectedWallIndex))
+		SelectedWalls = Owner->GetConnectedWalls(SelectedWallIndex);
+	else {SelectionType = ESelectionType::None; SelectedWalls.Empty();}
+	RefreshHandles();
+	BuildSelectionOutline();
+	ContextWallIndex = ContextPointIndex = -1;
 }
 void USelectionAndHandlesComponent::SelectAtCursor()
 {
@@ -223,8 +257,13 @@ void USelectionAndHandlesComponent::SelectAtCursor()
 	bool bFound = false;
 	for (int i = 0; i < Owner->Walls[WallIndex].OpeningData.Num(); i++)
 	{
+		float BaseZ = Spline->GetLocationAtDistanceAlongSpline(Distance, ESplineCoordinateSpace::World).Z;
+		float ClickHeight = Owner->MousePosition.Z - BaseZ;
 		FOpeningData OpeningData = Owner->Walls[WallIndex].OpeningData[i];
-		if (Distance >= OpeningData.Distance - OpeningData.Width / 2 && Distance <= OpeningData.Distance + OpeningData.Width / 2)
+		if (Distance >= OpeningData.Distance - OpeningData.Width / 2 &&
+		Distance <= OpeningData.Distance + OpeningData.Width / 2 &&
+		ClickHeight >= OpeningData.SillHeight &&
+		ClickHeight <= OpeningData.SillHeight + OpeningData.OpeningHeight)
 		{
 			SelectionType = ESelectionType::Opening;
 			SelectedWallIndex = WallIndex;
@@ -237,6 +276,7 @@ void USelectionAndHandlesComponent::SelectAtCursor()
 	{
 		SelectionType = ESelectionType::Wall;
 		SelectedWallIndex = WallIndex;
+		SelectedWalls = Owner->GetConnectedWalls(WallIndex);
 	}
 	BuildSelectionOutline();
 	RefreshHandles();
@@ -253,14 +293,24 @@ void USelectionAndHandlesComponent::BuildSelectionOutline()
 	FVector CamLocal = Owner->GetActorTransform().InverseTransformPosition(CamWorld);
 	
 	USplineComponent* Spline = Owner->Walls[SelectedWallIndex].SplineComponent;
-	float Height = Owner->Walls[SelectedWallIndex].Height;
 	float Thickness = Owner->Walls[SelectedWallIndex].Thickness;
 	if (SelectionType == ESelectionType::Wall)
 	{
-		FMeshBuffers B = FBuildingMesh::BuildWallOutline(Owner->Walls[SelectedWallIndex], CamLocal, OutlineThickness, Height,
-			OutlineDashTile, ABuilding::WallStep);
-		SelectionOutline->CreateMeshSection(0, B.Vertices, B.Triangles, B.Normals, B.UVs, B.VertexColors, B.Tangents, false);
-		
+		FMeshBuffers All;
+		for (int32 wi : SelectedWalls)
+		{
+			if (!Owner->Walls.IsValidIndex(wi)) continue;
+			FMeshBuffers B = FBuildingMesh::BuildWallOutline(Owner->Walls[wi], CamLocal, OutlineThickness,
+				Owner->Walls[wi].Height, OutlineDashTile, ABuilding::WallStep);
+			int32 base = All.Vertices.Num();
+			All.Vertices.Append(B.Vertices);
+			All.Normals.Append(B.Normals);
+			All.UVs.Append(B.UVs);
+			All.VertexColors.Append(B.VertexColors);
+			All.Tangents.Append(B.Tangents);
+			for (int32 t : B.Triangles) All.Triangles.Add(t + base);
+		}
+		SelectionOutline->CreateMeshSection(0, All.Vertices, All.Triangles, All.Normals, All.UVs, All.VertexColors, All.Tangents, false);
 	}
 	else if (SelectionType == ESelectionType::Opening)
 	{
@@ -273,7 +323,7 @@ void USelectionAndHandlesComponent::BuildSelectionOutline()
 	if (OutlineMaterial) SelectionOutline->SetMaterial(0, OutlineMaterial);
 }
 //Handles
-UStaticMeshComponent* USelectionAndHandlesComponent::MakeHandle(UStaticMesh* Mesh, const FVector& Location, EHandleType Type)
+UStaticMeshComponent* USelectionAndHandlesComponent::MakeHandle(UStaticMesh* Mesh, const FVector& Location, EHandleType Type, int32 WallIdx, int32 LocalIdx)
 {
 	UStaticMeshComponent* H = NewObject<UStaticMeshComponent>(Owner);
 	H->SetStaticMesh(Mesh);
@@ -285,6 +335,8 @@ UStaticMeshComponent* USelectionAndHandlesComponent::MakeHandle(UStaticMesh* Mes
 	H->SetWorldLocation(Location);
 	Handles.Add(H);
 	HandleTypes.Add(Type);
+	HandleWall.Add(WallIdx);
+	HandleLocalIndex.Add(LocalIdx);
 	return H;
 }
 UStaticMeshComponent* USelectionAndHandlesComponent::MakeHandleDecoration(UStaticMesh* Mesh)
@@ -298,12 +350,12 @@ UStaticMeshComponent* USelectionAndHandlesComponent::MakeHandleDecoration(UStati
 	HandleDecorations.Add(D);
 	return D;
 }
-FVector USelectionAndHandlesComponent::HeightSliderBase() const
+FVector USelectionAndHandlesComponent::HeightSliderBase(int32 WallIdx) const
 {
-    USplineComponent* Spline = Owner->Walls[SelectedWallIndex].SplineComponent;
+    USplineComponent* Spline = Owner->Walls[WallIdx].SplineComponent;
     int32 NumPoints = Spline->GetNumberOfSplinePoints();
-    bool  bClosed   = Owner->Walls[SelectedWallIndex].bClosed;
-    float HalfThick = Owner->Walls[SelectedWallIndex].Thickness * 0.5f;
+    bool  bClosed   = Owner->Walls[WallIdx].bClosed;
+    float HalfThick = Owner->Walls[WallIdx].Thickness * 0.5f;
 
     int32 Corner = 0;
     FVector P = Spline->GetLocationAtSplinePoint(Corner, ESplineCoordinateSpace::World);
@@ -346,6 +398,8 @@ void USelectionAndHandlesComponent::RefreshHandles()
 	for (UStaticMeshComponent* H : Handles) H->DestroyComponent();
 	Handles.Empty();
 	HandleTypes.Empty();
+	HandleWall.Empty();
+	HandleLocalIndex.Empty();
 	HoveredHandleIndex = -1;
 	for (UStaticMeshComponent* D : HandleDecorations) D->DestroyComponent();
 	HandleDecorations.Empty();
@@ -361,46 +415,54 @@ void USelectionAndHandlesComponent::RefreshHandles()
 		float d1 = dc + O.Width / 2.f;
 		float MidZ = O.SillHeight + O.OpeningHeight / 2.f;
 		FVector Up = FVector::UpVector;
-		MakeHandle(MoveHandleMesh,   OSpline->GetLocationAtDistanceAlongSpline(dc, ESplineCoordinateSpace::World) + Up * MidZ, EHandleType::OpeningMove);
-		MakeHandle(CornerHandleMesh, OSpline->GetLocationAtDistanceAlongSpline(d0, ESplineCoordinateSpace::World) + Up * MidZ, EHandleType::OpeningEdgeStart);
-		MakeHandle(CornerHandleMesh, OSpline->GetLocationAtDistanceAlongSpline(d1, ESplineCoordinateSpace::World) + Up * MidZ, EHandleType::OpeningEdgeEnd);
-		MakeHandle(CornerHandleMesh, OSpline->GetLocationAtDistanceAlongSpline(dc, ESplineCoordinateSpace::World) + Up * (O.SillHeight + O.OpeningHeight), EHandleType::OpeningHead);
+		MakeHandle(MoveHandleMesh,   OSpline->GetLocationAtDistanceAlongSpline(dc, ESplineCoordinateSpace::World) + Up * MidZ, EHandleType::OpeningMove, SelectedWallIndex, 0);
+		MakeHandle(CornerHandleMesh, OSpline->GetLocationAtDistanceAlongSpline(d0, ESplineCoordinateSpace::World) + Up * MidZ, EHandleType::OpeningEdgeStart, SelectedWallIndex, 0);
+		MakeHandle(CornerHandleMesh, OSpline->GetLocationAtDistanceAlongSpline(d1, ESplineCoordinateSpace::World) + Up * MidZ, EHandleType::OpeningEdgeEnd, SelectedWallIndex, 0);
+		MakeHandle(CornerHandleMesh, OSpline->GetLocationAtDistanceAlongSpline(dc, ESplineCoordinateSpace::World) + Up * (O.SillHeight + O.OpeningHeight), EHandleType::OpeningHead, SelectedWallIndex, 0);
 		if (!O.bIsDoor)
-			MakeHandle(CornerHandleMesh, OSpline->GetLocationAtDistanceAlongSpline(dc, ESplineCoordinateSpace::World) + Up * O.SillHeight, EHandleType::OpeningSill);
+			MakeHandle(CornerHandleMesh, OSpline->GetLocationAtDistanceAlongSpline(dc, ESplineCoordinateSpace::World) + Up * O.SillHeight, EHandleType::OpeningSill, SelectedWallIndex, 0);
 		return;
 	}
 
-	USplineComponent* Spline = Owner->Walls[SelectedWallIndex].SplineComponent;
-	int32 NumPoints = Spline->GetNumberOfSplinePoints();
-
-	// Corner handles
-	for (int32 i = 0; i < NumPoints; i++)
-		MakeHandle(CornerHandleMesh, Spline->GetLocationAtSplinePoint(i, ESplineCoordinateSpace::World), EHandleType::Corner);
-
-	// Segment handles
-	bool bClosed = Owner->Walls[SelectedWallIndex].bClosed;
-	int32 NumSeg = bClosed ? NumPoints : NumPoints - 1;
-	for (int32 s = 0; s < NumSeg; s++)
+	for (int32 wi : SelectedWalls)
 	{
-		FVector A = Spline->GetLocationAtSplinePoint(s, ESplineCoordinateSpace::World);
-		FVector B = Spline->GetLocationAtSplinePoint((s + 1) % NumPoints, ESplineCoordinateSpace::World);
-		MakeHandle(MoveHandleMesh, (A + B) * 0.5f, EHandleType::Segment);
+		if (!Owner->Walls.IsValidIndex(wi) || !Owner->Walls[wi].SplineComponent) continue;
+		USplineComponent* Spline = Owner->Walls[wi].SplineComponent;
+		int32 NumPoints = Spline->GetNumberOfSplinePoints();
+
+		// Corner handles
+		for (int32 i = 0; i < NumPoints; i++)
+			MakeHandle(CornerHandleMesh, Spline->GetLocationAtSplinePoint(i, ESplineCoordinateSpace::World), EHandleType::Corner, wi, i);
+
+		// Segment handles
+		bool bClosed = Owner->Walls[wi].bClosed;
+		int32 NumSeg = bClosed ? NumPoints : NumPoints - 1;
+		for (int32 s = 0; s < NumSeg; s++)
+		{
+			FVector A = Spline->GetLocationAtSplinePoint(s, ESplineCoordinateSpace::World);
+			FVector B = Spline->GetLocationAtSplinePoint((s + 1) % NumPoints, ESplineCoordinateSpace::World);
+			MakeHandle(MoveHandleMesh, (A + B) * 0.5f, EHandleType::Segment, wi, s);
+		}
 	}
-	//Heigh handles
-	FVector Base = HeightSliderBase();
-	float Height = Owner->Walls[SelectedWallIndex].Height;
-	FVector Knob = Base + FVector(0, 0, Height);
-	MakeHandle(CornerHandleMesh, Knob, EHandleType::HeightKnob);
+	// single height slider for the whole group
+	if (SelectedWalls.Num() > 0 && Owner->Walls.IsValidIndex(SelectedWalls[0]))
+	{
+		int32 rep = SelectedWalls[0];
+		FVector Base = HeightSliderBase(rep);
+		float Height = Owner->Walls[rep].Height;
+		FVector Knob = Base + FVector(0, 0, Height);
+		MakeHandle(CornerHandleMesh, Knob, EHandleType::HeightKnob, rep, 0);
 
-	UStaticMeshComponent* BaseCube = MakeHandleDecoration(CornerHandleMesh);
-	BaseCube->SetWorldLocation(Base);
-	BaseCube->SetWorldScale3D(FVector(HandleScale));
+		UStaticMeshComponent* BaseCube = MakeHandleDecoration(CornerHandleMesh);
+		BaseCube->SetWorldLocation(Base);
+		BaseCube->SetWorldScale3D(FVector(HandleScale));
 
-	UStaticMeshComponent* Line = MakeHandleDecoration(CornerHandleMesh);
-	Line->SetWorldLocation(Base + FVector(0, 0, Height * 0.5f));
-	FVector Native = CornerHandleMesh->GetBoundingBox().GetSize();
-	float Thickness = 5.f;
-	Line->SetWorldScale3D(FVector(Thickness / Native.X, Thickness / Native.Y, Height / Native.Z));
+		UStaticMeshComponent* Line = MakeHandleDecoration(CornerHandleMesh);
+		Line->SetWorldLocation(Base + FVector(0, 0, Height * 0.5f));
+		FVector Native = CornerHandleMesh->GetBoundingBox().GetSize();
+		float Thickness = 5.f;
+		Line->SetWorldScale3D(FVector(Thickness / Native.X, Thickness / Native.Y, Height / Native.Z));
+	}
 	
 }
 int32 USelectionAndHandlesComponent::PickHandle()
@@ -468,9 +530,21 @@ bool USelectionAndHandlesComponent::TryBeginHandleDrag()
 	if (HandleIndex == -1) return false;
 	bDragging = true;
 	DraggedPointIndex = HandleIndex;
+	if (SelectionType == ESelectionType::Wall && HandleWall.IsValidIndex(HandleIndex))
+		SelectedWallIndex = HandleWall[HandleIndex];
 	
 	LastDragPoint = Handles[HandleIndex]->GetComponentLocation();
 	return true;
+}
+bool USelectionAndHandlesComponent::TrySetCornerContext()
+{
+	int32 h = PickHandle();
+	if (!HandleTypes.IsValidIndex(h)) return false;
+	if (HandleTypes[h] != EHandleType::Corner) return false;   // only corner handles
+	ContextWallIndex  = HandleWall[h];
+	ContextPointIndex = HandleLocalIndex[h];
+	return true;
+	
 }
 void USelectionAndHandlesComponent::EndHandleDrag()
 {
@@ -482,7 +556,8 @@ void USelectionAndHandlesComponent::EndHandleDrag()
 		&& Owner->Walls[SelectedWallIndex].SplineComponent)
 	{
 		int32 NumPoints = Owner->Walls[SelectedWallIndex].SplineComponent->GetNumberOfSplinePoints();
-		bEndpointCorner = (DraggedPointIndex == 0 || DraggedPointIndex == NumPoints - 1);
+		int32 LocalPt = HandleLocalIndex.IsValidIndex(DraggedPointIndex) ? HandleLocalIndex[DraggedPointIndex] : -1;
+		bEndpointCorner = (LocalPt == 0 || LocalPt == NumPoints - 1);
 	}
 
 	if (Handles.IsValidIndex(DraggedPointIndex))
@@ -493,13 +568,13 @@ void USelectionAndHandlesComponent::EndHandleDrag()
 
 	if (bEndpointCorner)
 	{
+		Owner->Walls[SelectedWallIndex].Junctions.Empty();   // re-evaluate this wall's links from scratch
 		int32 Survivor = Owner->TryMergeWalls(SelectedWallIndex);
-		if (Survivor != -1)
-		{
-			SelectedWallIndex = Survivor;
-			RefreshHandles();
-			BuildSelectionOutline();
-		}
+		if (Survivor != -1) SelectedWallIndex = Survivor;
+		else Owner->TryMakeTJunction(SelectedWallIndex);
+		SelectedWalls = Owner->GetConnectedWalls(SelectedWallIndex);
+		RefreshHandles();
+		BuildSelectionOutline();
 	}
 }
 

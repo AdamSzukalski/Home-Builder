@@ -25,21 +25,31 @@ struct FOpeningData
 	float OpeningHeight = 200.f;
 	bool bIsDoor = false;
 };
+USTRUCT()
+struct FWallJunction
+{
+	GENERATED_BODY()
+	int32 PointIndex = -1;    
+	int32 TargetWall = -1;      
+	float TargetDistance = 0.f; 
+};
 USTRUCT(BlueprintType)
 struct FWallData
 {
 	GENERATED_BODY()
-	
+
 	UPROPERTY()
 	USplineComponent* SplineComponent = nullptr;
 	UPROPERTY()
 	UProceduralMeshComponent* WallMesh = nullptr;
 	UPROPERTY()
 	TArray<FOpeningData> OpeningData;
+	UPROPERTY()
+	TArray<FWallJunction> Junctions;
 	float Height = 300.f;
 	float Thickness = 100.f;
 	bool bClosed = false;
-
+	bool bRounded = false;
 };
 class USelectionAndHandlesComponent;
 UCLASS()
@@ -58,6 +68,8 @@ public:
 	UInputAction* IA_Commit;
 	UPROPERTY(EditAnywhere, Category = "Building|Input")
 	UInputAction* IA_Cancel;
+	UPROPERTY(EditAnywhere, Category = "Building|Input")
+	UInputAction* IA_Context;
 
 	UPROPERTY(VisibleAnywhere, Category = "Building|Tools|Wall")
 	TArray<FWallData> Walls;
@@ -103,8 +115,14 @@ public:
 	void BuildWallMesh(const FWallData& Wall, UProceduralMeshComponent* Target, bool bPreview);
 	void RebuildWall(int32 Index);
 	int32 TryMergeWalls(int32 MovedIndex);
+	bool TryMakeTJunction(int32 MovedIndex);
+	void ResolveAllJunctions(int32 SkipWall = -1);
+	void FixJunctionsAfterRemove(int32 RemovedIndex);
+	bool FormsTRoom(int32 Index) const;
+	TArray<int32> GetConnectedWalls(int32 WallIndex);
 	bool OpeningOverlaps(const FWallData& Wall, float Distance, float HalfWidth, float Sill, float Head,
 	int32 IgnoreIndex = -1)const;
+	void DeleteCorner(int32 WallIndex, int32 PointIndex);
 protected:
 	APlayerController* PlayerController = nullptr;
 	AGameHUD* GameHUD = nullptr;
@@ -120,10 +138,13 @@ protected:
 	void DrawingCancelled();
 	void TickWallPreview();
 	void TickOpeningPreview();
+	void RightClick();
 
 	//Walls && Floor && Roof
 	const float FloorZOffset = 2.f;
-	
+
+	void ApplySplineType(USplineComponent* Spline, bool bRounded);
+	int32 SpawnWall(const TArray<FVector>& WorldPoints, const FWallData& Template);
 	void BuildFloorMesh(const USplineComponent* Spline, UProceduralMeshComponent* Target);
 	void BuildRoofMesh(const USplineComponent* Spline, const int32 WallHeight, UProceduralMeshComponent* Target);
 

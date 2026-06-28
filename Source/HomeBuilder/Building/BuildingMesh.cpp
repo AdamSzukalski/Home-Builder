@@ -57,15 +57,39 @@ static void AddLoop(FMeshBuffers&B, const TArray<FVector>& Points, bool bClosed,
 }
 namespace FBuildingMesh
 {
-	
+	static FVector WallCornerOffset(const USplineComponent* Spline, float d, float HalfThickness, bool bClosed,
+		bool bRounded)
+	{
+		const float Len = Spline->GetSplineLength();
+		if (bClosed && d > Len - 1.f) d = 0.f;              
+		const FVector R = Spline->GetRightVectorAtDistanceAlongSpline(d, ESplineCoordinateSpace::Local);
+		if (bRounded) return R * HalfThickness;
+		const int32 NumPts = Spline->GetNumberOfSplinePoints();
+		const FVector P = Spline->GetLocationAtDistanceAlongSpline(d, ESplineCoordinateSpace::Local);
+		for (int32 p = 0; p < NumPts; p++)
+		{
+			bool bInterior = bClosed || (p > 0 && p < NumPts - 1);
+			if (!bInterior) continue;
+			if (FMath::Abs(Spline->GetDistanceAlongSplineAtSplinePoint(p) - d) > 1.f) continue;
+			int32 prev = (p == 0) ? NumPts - 1 : p - 1;
+			int32 next = (p == NumPts - 1) ? 0 : p + 1;
+			FVector ToPrev = (Spline->GetLocationAtSplinePoint(prev, ESplineCoordinateSpace::Local) - P).GetSafeNormal();
+			FVector ToNext = (Spline->GetLocationAtSplinePoint(next, ESplineCoordinateSpace::Local) - P).GetSafeNormal();
+			float SinHalf = FMath::Sqrt(FMath::Max(0.05f, (1.f - FVector::DotProduct(ToPrev, ToNext)) * 0.5f));
+			FVector Bis = (-(ToPrev + ToNext)).GetSafeNormal();
+			if (FVector::DotProduct(Bis, R) < 0.f) Bis = -Bis;
+			return Bis * (HalfThickness / SinHalf);
+		}
+		return R * HalfThickness;
+	}
     FMeshBuffers BuildWall(const FWallData& Wall, float WallStep)
     {
 		FMeshBuffers B;
-		const USplineComponent* SplineComponent = Wall.SplineComponent;
-		if (!SplineComponent) return B;
+		const USplineComponent* Spline = Wall.SplineComponent;
+		if (!Spline) return B;
 		const float HalfThickness = Wall.Thickness / 2.f;
 		const float Height = Wall.Height;
-		const float Length = SplineComponent->GetSplineLength();
+		const float Length = Spline->GetSplineLength();
 		
 		TArray<float> Samples;
 		for (float d = 0.f; d < Length; d += WallStep) Samples.Add(d);
@@ -75,20 +99,21 @@ namespace FBuildingMesh
 			Samples.Add(FMath::Clamp(O.Distance - O.Width*0.5f, 0.f, Length));
 			Samples.Add(FMath::Clamp(O.Distance + O.Width*0.5f, 0.f, Length));
 		}
+    	for (int32 i = 0; i < Spline->GetNumberOfSplinePoints(); i++)
+    		Samples.Add(Spline->GetDistanceAlongSplineAtSplinePoint(i));
 		Samples.Sort();
+		
+    	for (int32 i = 0; i < Samples.Num(); i++)
+    	{
+    		float d = Samples[i];
+    		FVector P     = Spline->GetLocationAtDistanceAlongSpline(d, ESplineCoordinateSpace::Local);
+    		FVector Offset = WallCornerOffset(Spline, d, HalfThickness, Wall.bClosed, Wall.bRounded);
 
-		// vertex loop — one ring per sample
-		for (int32 i = 0; i < Samples.Num(); i++)
-		{
-			float d = Samples[i];
-			FVector Location = SplineComponent->GetLocationAtDistanceAlongSpline(d, ESplineCoordinateSpace::Local);
-			FVector Right = SplineComponent->GetRightVectorAtDistanceAlongSpline(d, ESplineCoordinateSpace::Local);
-
-			B.Vertices.Add(Location - Right*HalfThickness);//X1
-			B.Vertices.Add(Location + Right*HalfThickness);//X2
-			B.Vertices.Add(Location - Right*HalfThickness + FVector::UpVector*Height);//Y1
-			B.Vertices.Add(Location + Right*HalfThickness + FVector::UpVector*Height);//Y2
-		}
+    		B.Vertices.Add(P - Offset);                            //X1
+    		B.Vertices.Add(P + Offset);                            //X2
+    		B.Vertices.Add(P - Offset + FVector::UpVector*Height); //Y1
+    		B.Vertices.Add(P + Offset + FVector::UpVector*Height); //Y2
+    	}
 		
 		auto AddQuad = [&](int32 a, int32 b, int32 c, int32 d)
 		{
@@ -135,9 +160,12 @@ namespace FBuildingMesh
 			}
 			if (z < Height) AddPanel(La, Ra, Lb, Rb, z, Height, true,  false);
 		}
-		const int32 LastRing = (Samples.Num() - 1) *4;
-		AddQuad(0,1,2,3);
-		AddQuad(LastRing, LastRing+2, LastRing+1, LastRing+3);
+		if (!Wall.bClosed)
+		{
+			const int32 LastRing = (Samples.Num() - 1) *4;
+			AddQuad(0,1,2,3);
+			AddQuad(LastRing, LastRing+2, LastRing+1, LastRing+3);
+		}
 		UKismetProceduralMeshLibrary::CalculateTangentsForMesh(B.Vertices, B.Triangles, B.UVs, B.Normals, B.Tangents);
 		return B;
     }
@@ -149,14 +177,17 @@ namespace FBuildingMesh
 		const int32 N = Spline->GetNumberOfSplinePoints();
 		if (N < 3) return B;
 	
-		TArray<FVector> Outline;
-		const float Length = Spline->GetSplineLength();
-		const int32 NumRings = FMath::CeilToInt(Length / WallStep);
-		for (int32 i = 0; i < NumRings; i++)
-		{
-			float d = i * WallStep;
-			Outline.Add(Spline->GetLocationAtDistanceAlongSpline(d, ESplineCoordinateSpace::Local));
-		}
+    	TArray<FVector> Outline;
+    	const float Length = Spline->GetSplineLength();
+
+    	TArray<float> Dists;
+    	for (float d = 0.f; d < Length; d += WallStep) Dists.Add(d);
+    	for (int32 i = 0; i < N; i++)                      
+    		Dists.Add(Spline->GetDistanceAlongSplineAtSplinePoint(i));
+    	Dists.Sort();
+
+    	for (float d : Dists)
+    		Outline.Add(Spline->GetLocationAtDistanceAlongSpline(d, ESplineCoordinateSpace::Local));
 	
 		float FloorZ = Outline[0].Z;
 		for (const FVector& P : Outline) FloorZ = FMath::Max(FloorZ, P.Z);
@@ -186,7 +217,7 @@ namespace FBuildingMesh
 		FMeshBuffers B;
 		if (!Spline) return B;
 		const int32 N = Spline->GetNumberOfSplinePoints();
-		if (N < 3) return B;
+		if (N != 4) return B;
 			
 		TArray<FVector> P;
 		for (int i = 0; i < N; i++)
@@ -309,20 +340,30 @@ namespace FBuildingMesh
 		FMeshBuffers B;
 		USplineComponent* Spline = Wall.SplineComponent;
 		float Length = Spline->GetSplineLength();
-		int32 Num = FMath::CeilToInt(Length / WallStep);
 		bool bClosed = Wall.bClosed;
     	float HalfThickness = Wall.Thickness / 2;
     	FVector Up = FVector::UpVector;
     	
-		for (int32 i = 0; i < Num; i++)
+		const int32 NumPts = Spline->GetNumberOfSplinePoints();
+		TArray<float> Dists;
+		for (float d = 0.f; d < Length; d += WallStep) Dists.Add(d);
+		for (int32 p = 0; p < NumPts; p++)
 		{
-			Footprint.Add(Spline->GetLocationAtDistanceAlongSpline(FMath::Min(i * WallStep, Length), ESplineCoordinateSpace::Local));
-			Right.Add(Spline->GetRightVectorAtDistanceAlongSpline(FMath::Min(i * WallStep, Length), ESplineCoordinateSpace::Local));
+			float pd = Spline->GetDistanceAlongSplineAtSplinePoint(p);
+			if (pd > 0.5f && pd < Length - 0.5f) Dists.Add(pd);   // interior corners only
+		}
+		Dists.Sort();
 
-			BottomOut.Add(Footprint[i] + Right[i] * HalfThickness);
-			BottomIn.Add(Footprint[i] - Right[i] * HalfThickness);
-			TopOut.Add(BottomOut[i] + Up * Height);
-			TopIn.Add(BottomIn[i] + Up * Height);
+		for (float d : Dists)
+		{
+			FVector P = Spline->GetLocationAtDistanceAlongSpline(d, ESplineCoordinateSpace::Local);
+			FVector Offset = WallCornerOffset(Spline, d, HalfThickness, bClosed, Wall.bRounded);
+			Footprint.Add(P);
+			Right.Add(Spline->GetRightVectorAtDistanceAlongSpline(d, ESplineCoordinateSpace::Local));
+			BottomOut.Add(P + Offset);
+			BottomIn.Add(P - Offset);
+			TopOut.Add(P + Offset + Up * Height);
+			TopIn.Add(P - Offset + Up * Height);
 		}
 		if (!bClosed)
 		{

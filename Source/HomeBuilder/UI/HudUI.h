@@ -40,6 +40,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "UI|Functionality")
 	USizeBox* PaintOptionsPanel;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "UI|Functionality")
+	UButton* RoundedWallsButton;
 	
 	UFUNCTION(BlueprintCallable)
 	void ApplyButtonStyle(UButton* Button, bool bIsActive);

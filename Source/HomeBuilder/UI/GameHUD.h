@@ -26,6 +26,9 @@ public:
 	UPROPERTY(BlueprintReadWrite, Category="UI|State")
 	EBuildTool CurrentBuildTool = EBuildTool::None;
 
+	UPROPERTY(BlueprintReadWrite, Category = "UI|State")
+	bool bRoundedWalls = false;
+
 	// Paint Texture
 	UPROPERTY(BlueprintReadWrite, Category="UI|State")
 	EPaintTexture CurrentPaintTexture = EPaintTexture::Grass;
@@ -54,8 +57,14 @@ public:
 	FOnModeChanged OnModeChanged;
 	UPROPERTY(BlueprintCallable, Category = "UI|Events")
 	FOnDeleteRequested OnDeleteRequested;
+	UPROPERTY(BlueprintAssignable, Category = "UI|Events")
+	FOnCornerContext OnCornerContext;
+	UPROPERTY(BlueprintAssignable, Category = "UI|Events")
+	FOnHideCornerContext OnHideCornerContext;
+ 	UPROPERTY(BlueprintCallable, Category = "UI|Events")
+	FOnDeleteCornerRequested OnDeleteCornerRequested;
 	
-	UFUNCTION(BLueprintCallable, Category = "UI|Events")
+	UFUNCTION(BlueprintCallable, Category = "UI|Events")
 	void RequestDelete();
 	
 	UFUNCTION(BlueprintCallable, Category = "UI|State")
@@ -69,8 +78,7 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "UI|State")
 	void SetBuildTool(EBuildTool NewTool);
-
-
+	
 	
 
 	// Economy
