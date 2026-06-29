@@ -83,7 +83,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Building|Tools|Roof")
 	UMaterialInterface* RoofMaterial;
 	UPROPERTY(EditAnywhere, Category = "Building|Tools|Roof")
-	float RoofHeight;
+	float RoofPitch = 0.6f;
 	
 	UPROPERTY(EditAnywhere, Category = "Building|Tools|Window")
 	UStaticMesh* WindowMesh;

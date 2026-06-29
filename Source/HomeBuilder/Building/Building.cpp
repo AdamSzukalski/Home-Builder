@@ -603,7 +603,7 @@ void ABuilding::BuildFloorMesh(const USplineComponent* Spline, UProceduralMeshCo
 }
 void ABuilding::BuildRoofMesh(const USplineComponent* Spline,const int32 WallHeight, UProceduralMeshComponent* Target)
 {
-	FMeshBuffers B = FBuildingMesh::BuildRoof(Spline, WallHeight, RoofHeight);
+	FMeshBuffers B = FBuildingMesh::BuildRoof(Spline, WallHeight, RoofPitch);
 	Target->CreateMeshSection(2, B.Vertices, B.Triangles, B.Normals, B.UVs, B.VertexColors, B.Tangents, false);
 	if (!RoofMaterial)return;
 	Target->SetMaterial(2, RoofMaterial);

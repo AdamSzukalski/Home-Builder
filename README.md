@@ -62,6 +62,7 @@ Automatically generated folders (Binaries, Intermediate, Saved, DerivedDataCache
 ### Screenshots
 ![Screenshot 1](Screenshots/editor_01.png)
 ![Screenshot 2](Screenshots/editor_02.png)
+![Screenshot 3](Screenshots/editor_03.png)
 
 ---
 

@@ -422,52 +422,71 @@ namespace FBuildingMesh
 	        }
 	    return Out;
 	}
-	static void AppendGable(FMeshBuffers& B, const FFootprintFrame& F, const FRoofRect& R, float RoofHeight)
+	static void AppendGable(FMeshBuffers& B, const FFootprintFrame& F, const FRoofRect& R, float RoofPitch,float RidgeCapZ)
 	{
-	    const float Eave  = F.EaveZ;
-	    const float Ridge = F.EaveZ + RoofHeight;
+	    const float Eave = F.EaveZ;
 
-		auto V = [&](float u, float v, float z) { return FrameToLocal(F, FVector2D(u, v), z); };
-		auto AddQuad = [&](FVector a, FVector b, FVector c, FVector d)
-		{
-			const int32 base = B.Vertices.Num();
-			B.Vertices.Add(a); B.Vertices.Add(b); B.Vertices.Add(c); B.Vertices.Add(d);
-			B.Triangles.Add(base + 0); B.Triangles.Add(base + 2); B.Triangles.Add(base + 1);
-			B.Triangles.Add(base + 0); B.Triangles.Add(base + 3); B.Triangles.Add(base + 2);
-		};
-		auto AddTri = [&](FVector a, FVector b, FVector c)
-		{
-			const int32 base = B.Vertices.Num();
-			B.Vertices.Add(a); B.Vertices.Add(b); B.Vertices.Add(c);
-			B.Triangles.Add(base + 0); B.Triangles.Add(base + 2); B.Triangles.Add(base + 1);
-		};
-
-	    if (R.U1 - R.U0 >= R.V1 - R.V0)        
+	    auto V = [&](float u, float v, float z) { return FrameToLocal(F, FVector2D(u, v), z); };
+	    auto AddQuad = [&](FVector a, FVector b, FVector c, FVector d)
 	    {
-	        const float vm = (R.V0 + R.V1) * 0.5f;
-	        const FVector A  = V(R.U0, R.V0, Eave),  Bc = V(R.U1, R.V0, Eave);  // V0 eave
-	        const FVector C  = V(R.U1, R.V1, Eave),  D  = V(R.U0, R.V1, Eave);  // V1 eave
-	        const FVector rA = V(R.U0, vm, Ridge),   rB = V(R.U1, vm, Ridge);   // ridge ends
-
-	        AddQuad(A, Bc, rB, rA);   // front slope (V0 side)
-	        AddQuad(C, D, rA, rB);    // back slope  (V1 side)
-	        AddTri(A, rA, D);         // gable end at U0
-	        AddTri(Bc, C, rB);        // gable end at U1
-	    }
-	    else                               
+	        const int32 base = B.Vertices.Num();
+	        B.Vertices.Add(a); B.Vertices.Add(b); B.Vertices.Add(c); B.Vertices.Add(d);
+	        B.Triangles.Add(base + 0); B.Triangles.Add(base + 2); B.Triangles.Add(base + 1);
+	        B.Triangles.Add(base + 0); B.Triangles.Add(base + 3); B.Triangles.Add(base + 2);
+	    };
+	    auto AddTri = [&](FVector a, FVector b, FVector c)
 	    {
-	        const float um = (R.U0 + R.U1) * 0.5f;
-	        const FVector A  = V(R.U0, R.V0, Eave),  D  = V(R.U0, R.V1, Eave);  // U0 eave
-	        const FVector Bc = V(R.U1, R.V0, Eave),  C  = V(R.U1, R.V1, Eave);  // U1 eave
-	        const FVector rA = V(um, R.V0, Ridge),   rB = V(um, R.V1, Ridge);   // ridge ends
+	        const int32 base = B.Vertices.Num();
+	        B.Vertices.Add(a); B.Vertices.Add(b); B.Vertices.Add(c);
+	        B.Triangles.Add(base + 0); B.Triangles.Add(base + 2); B.Triangles.Add(base + 1);
+	    };
+		const bool bUMajor = (R.U1 - R.U0) >= (R.V1 - R.V0);
+		
+	    const float a0 = bUMajor ? R.U0 : R.V0;
+	    const float a1 = bUMajor ? R.U1 : R.V1;
+	    const float b0 = bUMajor ? R.V0 : R.U0;
+	    const float b1 = bUMajor ? R.V1 : R.U1;
+	    const float bm = 0.5f * (b0 + b1);
+	    const float halfSpan = 0.5f * (b1 - b0);
+		const float Ridge = FMath::Min(Eave + RoofPitch * halfSpan, RidgeCapZ);
 
-	        AddQuad(D, A, rA, rB);    // left slope  (U0 side)
-	        AddQuad(Bc, C, rB, rA);   // right slope (U1 side)
-	        AddTri(A, Bc, rA);        // gable end at V0
-	        AddTri(C, D, rB);         // gable end at V1
-	    }
+	    auto P  = [&](float a, float b, float z) { return bUMajor ? V(a, b, z) : V(b, a, z); };
+	    auto UV = [&](float a, float b)          { return bUMajor ? FVector2D(a, b) : FVector2D(b, a); };
+	    auto Quad = [&](FVector q0, FVector q1, FVector q2, FVector q3)
+	    { if (bUMajor) AddQuad(q0, q1, q2, q3); else AddQuad(q3, q2, q1, q0); };
+	    auto Tri = [&](FVector t0, FVector t1, FVector t2)
+	    { if (bUMajor) AddTri(t0, t1, t2); else AddTri(t2, t1, t0); };
+			
+	    const float eps = 1.0f;
+	    const bool end0Interior = PointInPolygon(F.Points, UV(a0 - eps, bm));
+	    const bool end1Interior = PointInPolygon(F.Points, UV(a1 + eps, bm));
+
+		const float am = 0.5f * (a0 + a1);
+		const bool b0Interior = PointInPolygon(F.Points, UV(am, b0 - eps));
+		const bool b1Interior = PointInPolygon(F.Points, UV(am, b1 + eps));
+			
+		const float run = (RoofPitch > KINDA_SMALL_NUMBER) ? (Ridge - Eave) / RoofPitch : halfSpan;
+		const float ra0 = a0 - (end0Interior ? run : 0.f);
+		const float ra1 = a1 + (end1Interior ? run : 0.f);
+			
+	    Quad(P(a0, b0, Eave), P(a1, b0, Eave), P(ra1, bm, Ridge), P(ra0, bm, Ridge)); // b0 slope
+	    Quad(P(a1, b1, Eave), P(a0, b1, Eave), P(ra0, bm, Ridge), P(ra1, bm, Ridge)); // b1 slope
+			
+	    // if (!end0Interior) Tri(P(a0, b0, Eave), P(a0, bm, Ridge), P(a0, b1, Eave));
+	    // if (!end1Interior) Tri(P(a1, b0, Eave), P(a1, b1, Eave), P(a1, bm, Ridge));
+
+		if (!end0Interior)
+		{
+			if (!b0Interior) Tri(P(a0, b0, Eave), P(a0, bm, Ridge), P(a0, bm, Eave)); // b0 half
+			if (!b1Interior) Tri(P(a0, bm, Eave), P(a0, bm, Ridge), P(a0, b1, Eave)); // b1 half
+		}
+		if (!end1Interior)
+		{
+			if (!b0Interior) Tri(P(a1, b0, Eave), P(a1, bm, Eave), P(a1, bm, Ridge)); // b0 half
+			if (!b1Interior) Tri(P(a1, bm, Eave), P(a1, b1, Eave), P(a1, bm, Ridge)); // b1 half
+		}
 	}
-	FMeshBuffers BuildRoof(const USplineComponent* Spline, int32 WallHeight, float RoofHeight)
+	FMeshBuffers BuildRoof(const USplineComponent* Spline, int32 WallHeight, float RoofPitch)
 	{
 		FMeshBuffers B;
 		if (!Spline) return B;
@@ -485,8 +504,24 @@ namespace FBuildingMesh
 		if (BuildFootprintFrame(P, F) && AllCornersNear90(F.Points))
 		{
 			SnapToAxes(F.Points);
-			for (const FRoofRect& R : DecomposeRectilinear(F.Points))
-				AppendGable(B,F,R, RoofHeight);
+			const TArray<FRoofRect> Rects = DecomposeRectilinear(F.Points);
+			float RidgeCapZ = F.EaveZ;
+			{
+				float bestArea = -1.f;
+				for (const FRoofRect& R : Rects)
+				{
+					const float w = R.U1 - R.U0, d = R.V1 - R.V0;
+					const float area = w * d;
+					if (area > bestArea)
+					{
+						bestArea = area;
+						const float halfSpan = 0.5f * FMath::Min(w, d);   // minor axis, matches line 450
+						RidgeCapZ = F.EaveZ + RoofPitch * halfSpan;
+					}
+				}
+			}
+			for (const FRoofRect& R : Rects)
+				AppendGable(B, F, R, RoofPitch, RidgeCapZ);
 
 			UKismetProceduralMeshLibrary::CalculateTangentsForMesh(B.Vertices, B.Triangles, B.UVs, B.Normals, B.Tangents);
 			return B;
@@ -498,8 +533,9 @@ namespace FBuildingMesh
 		FVector Up = FVector::UpVector;
 		if ((P[0] - P[1]).Size() > (P[1] - P[2]).Size())
 		{
-			RidgeA = FMath::Lerp(P[1], P[2], 0.5f) + Up * RoofHeight;
-			RidgeB = FMath::Lerp(P[3], P[0], 0.5f) + Up * RoofHeight;
+			const float H = RoofPitch * 0.5f * (P[1] - P[2]).Size();
+			RidgeA = FMath::Lerp(P[1], P[2], 0.5f) + Up * H;
+			RidgeB = FMath::Lerp(P[3], P[0], 0.5f) + Up * H;
 
 			//Roof Planes
 			B.Vertices.Add(P[0]);
@@ -522,8 +558,9 @@ namespace FBuildingMesh
 		}
 		else
 		{
-			RidgeA = FMath::Lerp(P[0], P[1], 0.5f) + Up * RoofHeight;
-			RidgeB = FMath::Lerp(P[2], P[3], 0.5f) + Up * RoofHeight;
+			const float H = RoofPitch * 0.5f * (P[0] - P[1]).Size();
+			RidgeA = FMath::Lerp(P[0], P[1], 0.5f) + Up * H;   
+			RidgeB = FMath::Lerp(P[2], P[3], 0.5f) + Up * H;   
 
 			//Roof Planes
 			B.Vertices.Add(P[1]);

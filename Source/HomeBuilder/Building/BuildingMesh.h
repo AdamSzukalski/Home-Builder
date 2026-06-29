@@ -20,7 +20,7 @@ namespace FBuildingMesh
 {
 	FMeshBuffers BuildWall(const FWallData& Wall, float WallStep);
 	FMeshBuffers BuildFloor(const USplineComponent* Spline, float WallStep, float FloorZOffset);
-	FMeshBuffers BuildRoof(const USplineComponent* Spline, int32 WallHeight, float RoofHeight);
+	FMeshBuffers BuildRoof(const USplineComponent* Spline, int32 WallHeight, float RoofPitch);
 	FTransform TransformMesh(const UStaticMesh* Mesh, const USplineComponent* Spline,
 		const FOpeningData& Opening, float Thickness);
 	void FindOpeningsAt(const FWallData& Wall, float d, TArray<FVector2D>& OutGaps);
