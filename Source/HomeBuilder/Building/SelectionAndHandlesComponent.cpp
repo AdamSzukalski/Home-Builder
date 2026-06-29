@@ -568,7 +568,7 @@ void USelectionAndHandlesComponent::EndHandleDrag()
 
 	if (bEndpointCorner)
 	{
-		Owner->Walls[SelectedWallIndex].Junctions.Empty();   // re-evaluate this wall's links from scratch
+		Owner->Walls[SelectedWallIndex].Junctions.Empty();
 		int32 Survivor = Owner->TryMergeWalls(SelectedWallIndex);
 		if (Survivor != -1) SelectedWallIndex = Survivor;
 		else Owner->TryMakeTJunction(SelectedWallIndex);
