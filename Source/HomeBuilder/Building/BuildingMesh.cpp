@@ -351,6 +351,70 @@ namespace FBuildingMesh
 			}
 		}
 	}
+	static void SnapToGrid(TArray<FVector2D>& Pts, float Tol)
+	{
+		auto SnapAxis = [&](bool bX)
+		{
+			TArray<float> Sorted;
+			for (const FVector2D& P : Pts) Sorted.Add(bX ? P.X : P.Y);
+			Sorted.Sort();
+			
+			TArray<float> Reps;
+			for (int32 i = 0; i < Sorted.Num(); )
+			{
+				int32 j = i + 1;
+				while (j < Sorted.Num() && Sorted[j] - Sorted[j - 1] <= Tol) ++j;
+				float sum = 0.f;
+				for (int32 k = i; k < j; ++k) sum += Sorted[k];
+				Reps.Add(sum / (j - i));
+				i = j;
+			}
+
+			for (FVector2D& P : Pts)
+			{
+				auto& c = bX ? P.X : P.Y;
+				float best = Reps[0];
+				for (float r : Reps)
+					if (FMath::Abs(r - c) < FMath::Abs(best - c)) best = r;
+				c = best;
+			}
+		};
+		SnapAxis(true);
+		SnapAxis(false);
+	}
+	static void OffsetPolygonOutward(TArray<FVector2D>& Pts, float d)
+	{
+		const int32 N = Pts.Num();
+		if (N < 3 || FMath::Abs(d) < KINDA_SMALL_NUMBER) return;
+
+		double area2 = 0.0;
+		for (int32 i = 0; i < N; ++i)
+		{
+			const FVector2D& a = Pts[i];
+			const FVector2D& b = Pts[(i + 1) % N];
+			area2 += (double)a.X * b.Y - (double)b.X * a.Y;
+		}
+		const float sgn = (area2 >= 0.0) ? 1.f : -1.f;  
+
+		TArray<FVector2D> ON; ON.SetNum(N);       
+		for (int32 i = 0; i < N; ++i)
+		{
+			const FVector2D dir = (Pts[(i + 1) % N] - Pts[i]).GetSafeNormal();
+			ON[i] = -sgn * FVector2D(-dir.Y, dir.X);
+		}
+
+		TArray<FVector2D> Out; Out.SetNum(N);
+		for (int32 i = 0; i < N; ++i)
+		{
+			const FVector2D n1 = ON[(i + N - 1) % N];    
+			const FVector2D n2 = ON[i];                
+			const float den = 1.f + FVector2D::DotProduct(n1, n2);
+			Out[i] = Pts[i] + ((FMath::Abs(den) < KINDA_SMALL_NUMBER)
+								? FVector2D::ZeroVector
+								: d * (n1 + n2) / den);
+		}
+		Pts = Out;
+	}
 	struct FRoofRect { float U0, U1, V0, V1; };
 	static bool PointInPolygon(const TArray<FVector2D>& Poly, const FVector2D& Q)
 	{
@@ -422,7 +486,23 @@ namespace FBuildingMesh
 	        }
 	    return Out;
 	}
-	static void AppendGable(FMeshBuffers& B, const FFootprintFrame& F, const FRoofRect& R, float RoofPitch,float RidgeCapZ)
+	static bool ChooseRidgeAlongU(const FFootprintFrame& F, const FRoofRect& R, bool bAllowFlip)
+	{
+		const bool bAspect = (R.U1 - R.U0) >= (R.V1 - R.V0);
+		if (!bAllowFlip) return bAspect;       
+
+		const float midU = 0.5f * (R.U0 + R.U1);
+		const float midV = 0.5f * (R.V0 + R.V1);
+		const float eps  = 1.0f;
+		const bool nbrU = PointInPolygon(F.Points, FVector2D(R.U0 - eps, midV))
+					   || PointInPolygon(F.Points, FVector2D(R.U1 + eps, midV));
+		const bool nbrV = PointInPolygon(F.Points, FVector2D(midU, R.V0 - eps))
+					   || PointInPolygon(F.Points, FVector2D(midU, R.V1 + eps));
+
+		if (nbrU != nbrV) return nbrU;
+		return bAspect; 
+	}
+	static void AppendGable(FMeshBuffers& B, const FFootprintFrame& F, const FRoofRect& R, float RoofPitch,float RidgeCapZ, bool bAllowFlip)
 	{
 	    const float Eave = F.EaveZ;
 
@@ -440,7 +520,7 @@ namespace FBuildingMesh
 	        B.Vertices.Add(a); B.Vertices.Add(b); B.Vertices.Add(c);
 	        B.Triangles.Add(base + 0); B.Triangles.Add(base + 2); B.Triangles.Add(base + 1);
 	    };
-		const bool bUMajor = (R.U1 - R.U0) >= (R.V1 - R.V0);
+		const bool bUMajor = ChooseRidgeAlongU(F, R, bAllowFlip);
 		
 	    const float a0 = bUMajor ? R.U0 : R.V0;
 	    const float a1 = bUMajor ? R.U1 : R.V1;
@@ -486,7 +566,197 @@ namespace FBuildingMesh
 			if (!b1Interior) Tri(P(a1, bm, Eave), P(a1, b1, Eave), P(a1, bm, Ridge)); // b1 half
 		}
 	}
-	FMeshBuffers BuildRoof(const USplineComponent* Spline, int32 WallHeight, float RoofPitch)
+	struct FWaveVtx
+	{
+	    FVector2D P0;       
+	    FVector2D Vel;       
+	    float     tBirth = 0.f;
+	    int32     Prev = -1, Next = -1;
+	    int32     LeftEdge = -1, RightEdge = -1;
+	    int32     Node = -1; 
+	    bool      bAlive = true;
+	};
+	static bool BuildHipRoof(const FFootprintFrame& F, float RoofPitch, FMeshBuffers& B)
+	{
+	    const int32 N = F.Points.Num();
+	    if (N < 3) return false;
+
+	  
+	    double area2 = 0.0;
+	    for (int32 i = 0; i < N; ++i)
+	    {
+	        const FVector2D& a = F.Points[i];
+	        const FVector2D& b = F.Points[(i + 1) % N];
+	        area2 += (double)a.X * b.Y - (double)b.X * a.Y;
+	    }
+	    TArray<FVector2D> Poly = F.Points;
+	    if (area2 < 0.0) { for (int32 i = 0; i < N / 2; ++i) Poly.Swap(i, N - 1 - i); }
+
+	  
+	    TArray<FVector2D> EN; EN.SetNum(N);
+	    for (int32 i = 0; i < N; ++i)
+	    {
+	        const FVector2D d = (Poly[(i + 1) % N] - Poly[i]).GetSafeNormal();
+	        EN[i] = FVector2D(-d.Y, d.X);
+	    }
+
+	   
+	    for (int32 i = 0; i < N; ++i)
+	    {
+	        const FVector2D d0 = Poly[i] - Poly[(i + N - 1) % N];
+	        const FVector2D d1 = Poly[(i + 1) % N] - Poly[i];
+	        if (d0.X * d1.Y - d0.Y * d1.X <= 0.f) return false;
+	    }
+
+	    const float Eave = F.EaveZ;
+	    auto AddNode = [&](const FVector2D& uv, float t) -> int32
+	    { return B.Vertices.Add(FrameToLocal(F, uv, Eave + RoofPitch * t)); };
+	    auto MakeVel = [&](int32 le, int32 re) -> FVector2D
+	    {
+	        const FVector2D n1 = EN[le], n2 = EN[re];
+	        const float den = 1.f + FVector2D::DotProduct(n1, n2);
+	        return (FMath::Abs(den) < KINDA_SMALL_NUMBER) ? FVector2D::ZeroVector : (n1 + n2) / den;
+	    };
+
+	 
+	    TArray<FWaveVtx> W;
+		W.SetNum(N);
+		W.Reserve(2 * N);
+	    for (int32 i = 0; i < N; ++i)
+	    {
+	        FWaveVtx& v = W[i];
+	        v.P0 = Poly[i];
+	        v.LeftEdge = (i + N - 1) % N; v.RightEdge = i;
+	        v.Prev = (i + N - 1) % N;     v.Next = (i + 1) % N;
+	        v.Vel = MakeVel(v.LeftEdge, v.RightEdge);
+	        v.Node = AddNode(Poly[i], 0.f);
+	    }
+
+	  
+	    auto EdgeTime = [&](int32 is, float& outT, FVector2D& outQ) -> bool
+	    {
+	        const FWaveVtx& Vs = W[is];
+	        const FWaveVtx& Ve = W[Vs.Next];
+	        const FVector2D a = Vs.P0 - Ve.P0;
+	        const FVector2D b = Vs.Vel - Ve.Vel;
+	        const float bb = FVector2D::DotProduct(b, b);
+	        if (bb < KINDA_SMALL_NUMBER) return false;          
+	        const float t = -FVector2D::DotProduct(a, b) / bb;
+	        if (t <= FMath::Max(Vs.tBirth, Ve.tBirth) + 1e-3f) return false;
+	        if ((a + b * t).Size() > 1.0f) return false;          
+	        outT = t; outQ = Vs.P0 + Vs.Vel * t;
+	        return true;
+	    };
+
+	    struct FEv { float T; int32 Vs; int32 NextSnap; FVector2D Q; };
+	    auto Pred = [](const FEv& A, const FEv& C){ return A.T < C.T; };
+	    TArray<FEv> Q;
+	    for (int32 i = 0; i < N; ++i)
+	    {
+	        float t; FVector2D q;
+	        if (EdgeTime(i, t, q)) Q.HeapPush({ t, i, W[i].Next, q }, Pred);
+	    }
+		
+		TArray<TArray<int32>> startChain; startChain.SetNum(N);
+		TArray<TArray<int32>> endChain;   endChain.SetNum(N);
+		TArray<int32> apex; apex.Init(-1, N);
+		for (int32 e = 0; e < N; ++e)
+		{
+			startChain[e].Add(W[e].Node);         
+			endChain[e].Add(W[(e + 1) % N].Node);   
+		}
+		
+	    int32 alive = N;
+	    while (alive > 1 && Q.Num() > 0)
+	    {
+	        FEv e; Q.HeapPop(e, Pred);
+	        FWaveVtx& Vs = W[e.Vs];
+	        if (!Vs.bAlive || Vs.Next != e.NextSnap) continue;  
+	        FWaveVtx& Ve = W[Vs.Next];
+	        if (!Ve.bAlive) continue;
+
+	        const int32 q = AddNode(e.Q, e.T);
+	    	const int32 m  = Vs.RightEdge;  
+	    	const int32 eL = Vs.LeftEdge;   
+	    	const int32 eR = Ve.RightEdge;  
+	    	apex[m] = q;
+	    	endChain[eL].Add(q);
+	    	startChain[eR].Add(q);
+    		
+	        const int32 iU = W.Add(FWaveVtx());
+	        FWaveVtx& U = W[iU];
+	        U.P0 = e.Q;                 
+	        U.tBirth = e.T;
+	        U.LeftEdge = Vs.LeftEdge; U.RightEdge = Ve.RightEdge;
+	        U.Prev = Vs.Prev;         U.Next = Ve.Next;
+	        U.Node = q;
+	        U.Vel = MakeVel(U.LeftEdge, U.RightEdge);
+	        U.P0 = e.Q - U.Vel * e.T;   
+	        W[U.Prev].Next = iU;
+	        W[U.Next].Prev = iU;
+	        Vs.bAlive = Ve.bAlive = false;
+	        --alive;
+
+	        float t; FVector2D qq;
+	        if (EdgeTime(U.Prev, t, qq)) Q.HeapPush({ t, U.Prev, W[U.Prev].Next, qq }, Pred);
+	        if (EdgeTime(iU,     t, qq)) Q.HeapPush({ t, iU,     U.Next,        qq }, Pred);
+	    }
+
+		auto FanNormalUp = [&](const TArray<int32>& L) -> bool
+		{
+			const FVector A = B.Vertices[L[0]];
+			FVector n(0);
+			for (int32 i = 1; i + 1 < L.Num(); ++i)
+				n += FVector::CrossProduct(B.Vertices[L[i]] - A, B.Vertices[L[i + 1]] - A);
+			return n.Z >= 0.f;
+		};
+
+		for (int32 e = 0; e < N; ++e)
+		{
+			TArray<int32> loop;
+			for (int32 i = 0; i < endChain[e].Num(); ++i) loop.Add(endChain[e][i]);
+			if (apex[e] >= 0) loop.Add(apex[e]);
+			for (int32 i = startChain[e].Num() - 1; i >= 0; --i) loop.Add(startChain[e][i]);
+			
+			TArray<int32> L;
+			for (int32 idx : loop)
+				if (L.Num() == 0 || L.Last() != idx) L.Add(idx);
+			if (L.Num() >= 2 && L[0] == L.Last()) L.Pop();
+			if (L.Num() < 3) continue;
+
+			const bool up = FanNormalUp(L);
+			for (int32 i = 1; i + 1 < L.Num(); ++i)
+			{
+				if (up) { B.Triangles.Add(L[0]); B.Triangles.Add(L[i + 1]); B.Triangles.Add(L[i]);     }
+				else    { B.Triangles.Add(L[0]); B.Triangles.Add(L[i]);     B.Triangles.Add(L[i + 1]); }
+				
+			}
+		}
+		return true;
+	}
+	void SnapSplineTo90(USplineComponent* Spline)
+	{
+		if (!Spline) return;
+		const int32 N = Spline->GetNumberOfSplinePoints();
+		if (N < 4) return;
+
+		TArray<FVector> P;
+		for (int32 i = 0; i < N; ++i)
+			P.Add(Spline->GetLocationAtSplinePoint(i, ESplineCoordinateSpace::Local));
+
+		FFootprintFrame F;
+		if (!BuildFootprintFrame(P, F)) return;
+		if (!AllCornersNear90(F.Points)) return;  
+
+		SnapToAxes(F.Points);
+		SnapToGrid(F.Points, 10.f);
+
+		for (int32 i = 0; i < N; ++i)
+			Spline->SetLocationAtSplinePoint(i, FrameToLocal(F, F.Points[i], P[i].Z),
+											 ESplineCoordinateSpace::Local, false);
+		Spline->UpdateSpline();
+	}
+	FMeshBuffers BuildRoof(const USplineComponent* Spline, int32 WallHeight, float RoofRise, float EaveOffset)
 	{
 		FMeshBuffers B;
 		if (!Spline) return B;
@@ -501,99 +771,47 @@ namespace FBuildingMesh
 		}
 
 		FFootprintFrame F;
-		if (BuildFootprintFrame(P, F) && AllCornersNear90(F.Points))
+		const bool bFrame = BuildFootprintFrame(P, F);
+		if (bFrame) OffsetPolygonOutward(F.Points, EaveOffset);
+		if (bFrame && AllCornersNear90(F.Points))
 		{
 			SnapToAxes(F.Points);
+			SnapToGrid(F.Points, 10.f);
 			const TArray<FRoofRect> Rects = DecomposeRectilinear(F.Points);
-			float RidgeCapZ = F.EaveZ;
+			if (Rects.Num() == 0) return B;
+
+			int32 PrimaryIdx = 0;
+			float bestArea = -1.f;
+			for (int32 i = 0; i < Rects.Num(); ++i)
 			{
-				float bestArea = -1.f;
-				for (const FRoofRect& R : Rects)
-				{
-					const float w = R.U1 - R.U0, d = R.V1 - R.V0;
-					const float area = w * d;
-					if (area > bestArea)
-					{
-						bestArea = area;
-						const float halfSpan = 0.5f * FMath::Min(w, d);   // minor axis, matches line 450
-						RidgeCapZ = F.EaveZ + RoofPitch * halfSpan;
-					}
-				}
+				const float area = (Rects[i].U1 - Rects[i].U0) * (Rects[i].V1 - Rects[i].V0);
+				if (area > bestArea) { bestArea = area; PrimaryIdx = i; }
 			}
-			for (const FRoofRect& R : Rects)
-				AppendGable(B, F, R, RoofPitch, RidgeCapZ);
+			const FRoofRect& Pr = Rects[PrimaryIdx];
+			const float PrimaryHalfSpan = 0.5f * FMath::Min(Pr.U1 - Pr.U0, Pr.V1 - Pr.V0);
+			const float RoofPitch = (PrimaryHalfSpan > KINDA_SMALL_NUMBER) ? RoofRise / PrimaryHalfSpan : 0.f;
+			const float RidgeCapZ = F.EaveZ + RoofRise;
+
+			for (int32 i = 0; i < Rects.Num(); ++i)
+				AppendGable(B, F, Rects[i], RoofPitch, RidgeCapZ, /*bAllowFlip=*/ i != PrimaryIdx);
 
 			UKismetProceduralMeshLibrary::CalculateTangentsForMesh(B.Vertices, B.Triangles, B.UVs, B.Normals, B.Tangents);
 			return B;
 		}
-		
-		if (N != 4) return B;
-		
-		FVector RidgeA, RidgeB;
-		FVector Up = FVector::UpVector;
-		if ((P[0] - P[1]).Size() > (P[1] - P[2]).Size())
+		FVector2D Min( BIG_NUMBER,  BIG_NUMBER);
+		FVector2D Max(-BIG_NUMBER, -BIG_NUMBER);
+		for (const FVector2D& p : F.Points)
 		{
-			const float H = RoofPitch * 0.5f * (P[1] - P[2]).Size();
-			RidgeA = FMath::Lerp(P[1], P[2], 0.5f) + Up * H;
-			RidgeB = FMath::Lerp(P[3], P[0], 0.5f) + Up * H;
-
-			//Roof Planes
-			B.Vertices.Add(P[0]);
-			B.Vertices.Add(P[1]);
-			B.Vertices.Add(RidgeA);
-			B.Vertices.Add(RidgeB);
-
-			B.Vertices.Add(P[2]);
-			B.Vertices.Add(P[3]);
-			B.Vertices.Add(RidgeB);
-			B.Vertices.Add(RidgeA);
-
-			//Roof Ends
-			B.Vertices.Add(P[1]);
-			B.Vertices.Add(P[2]);
-			B.Vertices.Add(RidgeA);
-			B.Vertices.Add(P[3]);
-			B.Vertices.Add(P[0]);
-			B.Vertices.Add(RidgeB);
+			Min.X = FMath::Min(Min.X, p.X); Min.Y = FMath::Min(Min.Y, p.Y);
+			Max.X = FMath::Max(Max.X, p.X); Max.Y = FMath::Max(Max.Y, p.Y);
 		}
-		else
+		const float HalfSpan = 0.5f * FMath::Min(Max.X - Min.X, Max.Y - Min.Y);
+		const float RoofPitch = (HalfSpan > KINDA_SMALL_NUMBER) ? RoofRise / HalfSpan : 0.f;
+		if (bFrame && BuildHipRoof(F, RoofPitch, B))
 		{
-			const float H = RoofPitch * 0.5f * (P[0] - P[1]).Size();
-			RidgeA = FMath::Lerp(P[0], P[1], 0.5f) + Up * H;   
-			RidgeB = FMath::Lerp(P[2], P[3], 0.5f) + Up * H;   
-
-			//Roof Planes
-			B.Vertices.Add(P[1]);
-			B.Vertices.Add(P[2]);
-			B.Vertices.Add(RidgeA);
-			B.Vertices.Add(RidgeB);
-
-			B.Vertices.Add(P[3]);
-			B.Vertices.Add(P[0]);
-			B.Vertices.Add(RidgeB);
-			B.Vertices.Add(RidgeA);
-
-			//Roof Ends
-			B.Vertices.Add(P[0]);
-			B.Vertices.Add(P[1]);
-			B.Vertices.Add(RidgeA);
-			B.Vertices.Add(P[2]);
-			B.Vertices.Add(P[3]);
-			B.Vertices.Add(RidgeB);
+			UKismetProceduralMeshLibrary::CalculateTangentsForMesh(B.Vertices, B.Triangles, B.UVs, B.Normals, B.Tangents);
+			return B;
 		}
-		// Roof planes
-		for (int32 base : {0, 4})
-		{
-			B.Triangles.Add(base+0); B.Triangles.Add(base+2); B.Triangles.Add(base+1);
-			B.Triangles.Add(base+0); B.Triangles.Add(base+3); B.Triangles.Add(base+2);
-		}
-		// Roof ends
-		for (int32 base : {8, 11})
-		{
-			B.Triangles.Add(base+0); B.Triangles.Add(base+2); B.Triangles.Add(base+1);
-		}
-				
-		UKismetProceduralMeshLibrary::CalculateTangentsForMesh(B.Vertices, B.Triangles, B.UVs, B.Normals, B.Tangents);
 		return B;
 	}
 	FTransform TransformMesh(const UStaticMesh* Mesh, const USplineComponent* Spline,
@@ -746,6 +964,50 @@ namespace FBuildingMesh
     		AddEdge(B, FrontCorners[i], BackCorners[i], 0, UEnd, CamLocal, OutlineThickness);
     	}
     	return B;
+    }
+	FMeshBuffers BuildRoofOutline(const USplineComponent* Spline, int32 WallHeight, float RoofRise,
+        float EaveOffset, FVector CamLocal, float OutlineThickness, float DashTile)
+    {
+        FMeshBuffers B;
+        FMeshBuffers R = BuildRoof(Spline, WallHeight, RoofRise, EaveOffset); 
+        if (R.Triangles.Num() == 0) return B;
+    
+        auto Key  = [](const FVector& p){ return FIntVector(FMath::RoundToInt(p.X), FMath::RoundToInt(p.Y), FMath::RoundToInt(p.Z)); };
+        auto Less = [](const FIntVector& a, const FIntVector& b){ return a.X!=b.X ? a.X<b.X : (a.Y!=b.Y ? a.Y<b.Y : a.Z<b.Z); };
+    
+        struct FRec { FVector A, B; FVector N; int32 Count = 0; bool bFeature = false; };
+        TMap<FString, FRec> Edges;
+    
+        auto AddTriEdge = [&](const FVector& a, const FVector& b, const FVector& n)
+        {
+            FIntVector ka = Key(a), kb = Key(b);
+            if (Less(kb, ka)) Swap(ka, kb);
+            FString id = FString::Printf(TEXT("%d_%d_%d_%d_%d_%d"), ka.X,ka.Y,ka.Z, kb.X,kb.Y,kb.Z);
+            FRec& r = Edges.FindOrAdd(id);
+            if (r.Count == 0) { r.A = a; r.B = b; r.N = n; }
+            else if (FVector::DotProduct(r.N, n) < 0.99f) r.bFeature = true;   
+            r.Count++;
+        };
+    
+        for (int32 t = 0; t + 2 < R.Triangles.Num(); t += 3)
+        {
+            const FVector& v0 = R.Vertices[R.Triangles[t]];
+            const FVector& v1 = R.Vertices[R.Triangles[t+1]];
+            const FVector& v2 = R.Vertices[R.Triangles[t+2]];
+            FVector n = FVector::CrossProduct(v1 - v0, v2 - v0).GetSafeNormal();
+            AddTriEdge(v0, v1, n);
+            AddTriEdge(v1, v2, n);
+            AddTriEdge(v2, v0, n);
+        }
+    
+        for (const auto& Pair : Edges)
+        {
+            const FRec& r = Pair.Value;
+            if (!(r.Count == 1 || r.bFeature)) continue;   
+            float Len = (r.B - r.A).Size();
+            AddEdge(B, r.A, r.B, 0.f, Len / DashTile, CamLocal, OutlineThickness);
+        }
+        return B;
     }
 }
 

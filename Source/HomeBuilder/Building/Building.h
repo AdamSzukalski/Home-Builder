@@ -50,6 +50,7 @@ struct FWallData
 	float Thickness = 100.f;
 	bool bClosed = false;
 	bool bRounded = false;
+	float RoofRise = 180.f;
 };
 class USelectionAndHandlesComponent;
 UCLASS()
@@ -123,6 +124,7 @@ public:
 	bool OpeningOverlaps(const FWallData& Wall, float Distance, float HalfWidth, float Sill, float Head,
 	int32 IgnoreIndex = -1)const;
 	void DeleteCorner(int32 WallIndex, int32 PointIndex);
+	void FinalizeWallSnap(int32 Index);
 protected:
 	APlayerController* PlayerController = nullptr;
 	AGameHUD* GameHUD = nullptr;
@@ -146,7 +148,7 @@ protected:
 	void ApplySplineType(USplineComponent* Spline, bool bRounded);
 	int32 SpawnWall(const TArray<FVector>& WorldPoints, const FWallData& Template);
 	void BuildFloorMesh(const USplineComponent* Spline, UProceduralMeshComponent* Target);
-	void BuildRoofMesh(const USplineComponent* Spline, const int32 WallHeight, UProceduralMeshComponent* Target);
+	void BuildRoofMesh(const USplineComponent* Spline, const int32 WallHeight, const int32 WallThickness,float RoofRise, UProceduralMeshComponent* Target);
 
 	//Doors && Windows
 	const float OpeningGap = 8.f;

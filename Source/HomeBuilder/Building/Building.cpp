@@ -251,7 +251,7 @@ void ABuilding::RebuildWall(int32 Index)
 	if (Walls[Index].bClosed || FormsTRoom(Index))
 	{
 		BuildFloorMesh(Walls[Index].SplineComponent, M);
-		BuildRoofMesh(Walls[Index].SplineComponent, Walls[Index].Height, M);
+		BuildRoofMesh(Walls[Index].SplineComponent, Walls[Index].Height, Walls[Index].Thickness, Walls[Index].RoofRise, M);
 	}
 	else
 	{
@@ -571,6 +571,13 @@ void ABuilding::DeleteCorner(int32 WallIndex, int32 PointIndex)
 	for (FTmp& T : Ops)                   
 		if (T.Data.OpeningMesh) T.Data.OpeningMesh->DestroyComponent();
 }
+void ABuilding::FinalizeWallSnap(int32 Index)
+{
+	if (!Walls.IsValidIndex(Index)) return;
+	if (Walls[Index].bClosed)
+		FBuildingMesh::SnapSplineTo90(Walls[Index].SplineComponent);
+	RebuildWall(Index);
+}
 int32 ABuilding::SpawnWall(const TArray<FVector>& WorldPoints, const FWallData& Template)
 {
 	UProceduralMeshComponent* Mesh = NewObject<UProceduralMeshComponent>(this);
@@ -601,10 +608,10 @@ void ABuilding::BuildFloorMesh(const USplineComponent* Spline, UProceduralMeshCo
 	Target->SetMaterial(1, FloorMaterial);
 	
 }
-void ABuilding::BuildRoofMesh(const USplineComponent* Spline,const int32 WallHeight, UProceduralMeshComponent* Target)
+void ABuilding::BuildRoofMesh(const USplineComponent* Spline,const int32 WallHeight, const int32 WallThickness, float RoofRise, UProceduralMeshComponent* Target)
 {
-	FMeshBuffers B = FBuildingMesh::BuildRoof(Spline, WallHeight, RoofPitch);
-	Target->CreateMeshSection(2, B.Vertices, B.Triangles, B.Normals, B.UVs, B.VertexColors, B.Tangents, false);
+	FMeshBuffers B = FBuildingMesh::BuildRoof(Spline, WallHeight, RoofRise, WallThickness * 0.5f);
+	Target->CreateMeshSection(2, B.Vertices, B.Triangles, B.Normals, B.UVs, B.VertexColors, B.Tangents, true);
 	if (!RoofMaterial)return;
 	Target->SetMaterial(2, RoofMaterial);
 }

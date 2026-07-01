@@ -17,7 +17,8 @@ enum class EHandleType : uint8
 	OpeningEdgeStart,
 	OpeningEdgeEnd,
 	OpeningHead,
-	OpeningSill
+	OpeningSill,
+	RoofKnob
 };
 class ABuilding;
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
@@ -76,7 +77,7 @@ protected:
 	ESelectionType SelectionType = ESelectionType::None;
 	int32 SelectedWallIndex = -1;
 	int32 SelectedOpeningIndex = -1;
-	TArray<int32> SelectedWalls;        // connected group when a wall is selected
+	TArray<int32> SelectedWalls;     
 	UProceduralMeshComponent* SelectionOutline;
 	int32 ContextWallIndex = -1;
 	int32 ContextPointIndex = -1;
@@ -89,12 +90,13 @@ protected:
 	int32 HoveredHandleIndex = -1;
 	FVector LastDragPoint;
 	TArray<EHandleType> HandleTypes;
-	TArray<int32> HandleWall;        // parallel to Handles: which wall this handle edits
-	TArray<int32> HandleLocalIndex;  // parallel to Handles: corner=point idx, segment=segment idx
+	TArray<int32> HandleWall;      
+	TArray<int32> HandleLocalIndex; 
 
 	UStaticMeshComponent* MakeHandle(UStaticMesh* Mesh, const FVector& Location, EHandleType Type, int32 WallIdx, int32 LocalIdx);
 	UStaticMeshComponent* MakeHandleDecoration(UStaticMesh* Mesh);
 	FVector HeightSliderBase(int32 WallIdx) const;
+	FVector RoofSliderBase(int32 WallIdx) const;
 	void RefreshHandles();
 	bool GetCursorOnPlane(FVector PlanePoint,FVector PlaneNormal, FVector& Out);
 	bool GetCursorOnAxis(FVector AxisPoint, FVector AxisDir, float& OutDist);

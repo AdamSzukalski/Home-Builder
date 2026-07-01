@@ -46,7 +46,8 @@ enum class ESelectionType : uint8
 {
 	None     UMETA(DisplayName="None"),
 	Wall     UMETA(DisplayName="Wall"),
-	Opening  UMETA(DisplayName="Opening")
+	Opening  UMETA(DisplayName="Opening"),
+	Roof     UMETA(DisplayName="Roof")
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnModeChanged, EToolMode, NewMode);

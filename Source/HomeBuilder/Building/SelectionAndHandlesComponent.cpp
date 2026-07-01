@@ -164,6 +164,18 @@ void USelectionAndHandlesComponent::TickComponent(float DeltaTime, enum ELevelTi
 				O.OpeningHeight = Head - NewSill;
 				break;
 			}
+			case EHandleType::RoofKnob:
+			{
+					FVector Base = RoofSliderBase(SelectedWallIndex);
+					float Along;
+					if (!GetCursorOnAxis(Base, FVector::UpVector, Along)) break;
+					float NewRise = FMath::Clamp(Along, 0.5f, 400.f);
+					if(NewRise < 5.f) NewRise = 0.5f;
+					for (int32 wi : SelectedWalls)
+						if (Owner->Walls.IsValidIndex(wi))
+						{ Owner->Walls[wi].RoofRise = NewRise; Owner->RebuildWall(wi); }
+					break;
+			}
 		}
 		if (SelectionType == ESelectionType::Opening)
 		{
@@ -243,6 +255,26 @@ void USelectionAndHandlesComponent::DeleteHoveredCorner()
 }
 void USelectionAndHandlesComponent::SelectAtCursor()
 {
+	FHitResult Hit;
+	if (PlayerController->GetHitResultUnderCursor(ECC_Visibility, false, Hit))
+	{
+		for (int32 i = 0; i < Owner->Walls.Num(); i++)
+		{
+			if (Owner->Walls[i].WallMesh != Hit.GetComponent()) continue;
+			float EaveZ = Owner->Walls[i].SplineComponent
+							->GetLocationAtSplinePoint(0, ESplineCoordinateSpace::World).Z
+						  + Owner->Walls[i].Height;
+			if (Hit.ImpactPoint.Z > EaveZ + 1.f) 
+			{
+				SelectionType    = ESelectionType::Roof;
+				SelectedWallIndex = i;
+				SelectedWalls    = Owner->GetConnectedWalls(i);
+				BuildSelectionOutline();
+				RefreshHandles();
+				return;
+			}
+		}
+	}
 	int32 WallIndex;
 	float SplineKey;
 	if (!Owner->FindWallAtCursor(WallIndex, SplineKey))
@@ -318,6 +350,18 @@ void USelectionAndHandlesComponent::BuildSelectionOutline()
 			Spline, CamLocal, Thickness,OutlineThickness, OutlineDashTile);
 		SelectionOutline->CreateMeshSection(0, B.Vertices, B.Triangles, B.Normals, B.UVs, B.VertexColors, B.Tangents, false);
 	}
+	else if (SelectionType == ESelectionType::Roof)
+	{
+		int32 rep = SelectedWallIndex;
+		FMeshBuffers B = FBuildingMesh::BuildRoofOutline(
+		Owner->Walls[rep].SplineComponent,
+		Owner->Walls[rep].Height,
+		Owner->Walls[rep].RoofRise,      
+		Owner->Walls[rep].Thickness * 0.5f,
+		CamLocal, OutlineThickness, OutlineDashTile);
+		SelectionOutline->CreateMeshSection(0, B.Vertices, B.Triangles, B.Normals, B.UVs, B.VertexColors, B.Tangents, false);
+	}
+
 
 	SelectionOutline->SetVisibility(true);
 	if (OutlineMaterial) SelectionOutline->SetMaterial(0, OutlineMaterial);
@@ -393,6 +437,18 @@ FVector USelectionAndHandlesComponent::HeightSliderBase(int32 WallIdx) const
     }
     return MeshCorner + GapDir * SliderOffset;
 }
+FVector USelectionAndHandlesComponent::RoofSliderBase(int32 WallIdx) const
+{
+	USplineComponent* Spline = Owner->Walls[WallIdx].SplineComponent;
+	int32 N = Spline->GetNumberOfSplinePoints();
+	FVector Sum = FVector::ZeroVector;
+	for (int32 i = 0; i < N; i++)
+		Sum += Spline->GetLocationAtSplinePoint(i, ESplineCoordinateSpace::World);
+	FVector C = Sum / N;                             
+	C.Z = Spline->GetLocationAtSplinePoint(0, ESplineCoordinateSpace::World).Z
+		+ Owner->Walls[WallIdx].Height;                 
+	return C;
+}
 void USelectionAndHandlesComponent::RefreshHandles()
 {
 	for (UStaticMeshComponent* H : Handles) H->DestroyComponent();
@@ -406,6 +462,26 @@ void USelectionAndHandlesComponent::RefreshHandles()
 
 	if (SelectionType == ESelectionType::None) return;
 
+	if (SelectionType == ESelectionType::Roof)
+	{
+		int32 rep = SelectedWallIndex;
+		if (!Owner->Walls.IsValidIndex(rep)) return;
+		FVector Base = RoofSliderBase(rep);
+		float Rise = Owner->Walls[rep].RoofRise;
+		FVector Knob = Base + FVector(0, 0, Rise);
+		MakeHandle(CornerHandleMesh, Knob, EHandleType::RoofKnob, rep, 0);
+
+		UStaticMeshComponent* BaseCube = MakeHandleDecoration(CornerHandleMesh);
+		BaseCube->SetWorldLocation(Base);
+		BaseCube->SetWorldScale3D(FVector(HandleScale));
+
+		UStaticMeshComponent* Line = MakeHandleDecoration(CornerHandleMesh);
+		Line->SetWorldLocation(Base + FVector(0, 0, Rise * 0.5f));
+		FVector Native = CornerHandleMesh->GetBoundingBox().GetSize();
+		float Thickness = 5.f;
+		Line->SetWorldScale3D(FVector(Thickness / Native.X, Thickness / Native.Y, Rise / Native.Z));
+		return;
+	}
 	if (SelectionType == ESelectionType::Opening)
 	{
 		FOpeningData& O = Owner->Walls[SelectedWallIndex].OpeningData[SelectedOpeningIndex];
@@ -576,6 +652,7 @@ void USelectionAndHandlesComponent::EndHandleDrag()
 		RefreshHandles();
 		BuildSelectionOutline();
 	}
+	Owner->FinalizeWallSnap(SelectedWallIndex);
 }
 
 

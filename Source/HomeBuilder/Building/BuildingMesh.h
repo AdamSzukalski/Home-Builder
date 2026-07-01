@@ -20,7 +20,8 @@ namespace FBuildingMesh
 {
 	FMeshBuffers BuildWall(const FWallData& Wall, float WallStep);
 	FMeshBuffers BuildFloor(const USplineComponent* Spline, float WallStep, float FloorZOffset);
-	FMeshBuffers BuildRoof(const USplineComponent* Spline, int32 WallHeight, float RoofPitch);
+	void SnapSplineTo90(USplineComponent* Spline);
+	FMeshBuffers BuildRoof(const USplineComponent* Spline, int32 WallHeight, float RoofRise, float EaveOffset);
 	FTransform TransformMesh(const UStaticMesh* Mesh, const USplineComponent* Spline,
 		const FOpeningData& Opening, float Thickness);
 	void FindOpeningsAt(const FWallData& Wall, float d, TArray<FVector2D>& OutGaps);
@@ -29,5 +30,7 @@ namespace FBuildingMesh
 		float Height, float DashTile, float WallStep);
 	FMeshBuffers BuildOpeningOutline(const FOpeningData& Opening, const USplineComponent* Spline,
 		FVector CamLocal, float Thickness,float OutlineThickness, float DashTile);
+	FMeshBuffers BuildRoofOutline(const USplineComponent* Spline, int32 WallHeight, float RoofRise, float EaveOffset,
+		FVector CamLocal, float OutlineThickness, float DashTile);
 }
 
