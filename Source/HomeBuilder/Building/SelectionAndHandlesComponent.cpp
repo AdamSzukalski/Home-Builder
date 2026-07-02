@@ -50,7 +50,6 @@ void USelectionAndHandlesComponent::TickComponent(float DeltaTime, enum ELevelTi
 						if (Jn.PointIndex == LocalPt) { J = &Jn; break; }
 					if (J && Owner->Walls.IsValidIndex(J->TargetWall) && Owner->Walls[J->TargetWall].SplineComponent)
 					{
-						// junction corner: slide along the wall it's attached to so it stays connected
 						USplineComponent* T = Owner->Walls[J->TargetWall].SplineComponent;
 						float Key = T->FindInputKeyClosestToWorldLocation(P);
 						J->TargetDistance = T->GetDistanceAlongSplineAtSplineInputKey(Key);
@@ -214,6 +213,7 @@ void USelectionAndHandlesComponent::TickComponent(float DeltaTime, enum ELevelTi
 void USelectionAndHandlesComponent::DeleteSelected()
 {
 	if (SelectionType == ESelectionType::None) return;
+	Owner->PushUndoState();
 	if (SelectionType == ESelectionType::Wall)
 	{
 		TArray<int32> ToDelete = SelectedWalls;
@@ -245,6 +245,7 @@ void USelectionAndHandlesComponent::DeleteSelected()
 void USelectionAndHandlesComponent::DeleteHoveredCorner()
 {
 	if (!Owner->Walls.IsValidIndex(ContextWallIndex)) return;
+	Owner->PushUndoState();
 	Owner->DeleteCorner(ContextWallIndex, ContextPointIndex);
 	if (Owner->Walls.IsValidIndex(SelectedWallIndex))
 		SelectedWalls = Owner->GetConnectedWalls(SelectedWallIndex);
@@ -605,6 +606,7 @@ bool USelectionAndHandlesComponent::TryBeginHandleDrag()
 	int32 HandleIndex = PickHandle();
 	if (HandleIndex == -1) return false;
 	bDragging = true;
+	Owner->PushUndoState();
 	DraggedPointIndex = HandleIndex;
 	if (SelectionType == ESelectionType::Wall && HandleWall.IsValidIndex(HandleIndex))
 		SelectedWallIndex = HandleWall[HandleIndex];

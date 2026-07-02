@@ -52,6 +52,32 @@ struct FWallData
 	bool bRounded = false;
 	float RoofRise = 180.f;
 };
+USTRUCT(BlueprintType)
+struct FOpeningSnapshot
+{
+	GENERATED_BODY()
+	float Distance;
+	float Width = 120.f;
+	float SillHeight = 0.f;
+	float OpeningHeight = 200.f;
+	bool bIsDoor = false;
+};
+USTRUCT(BlueprintType)
+struct FWallSnapshot
+{
+	GENERATED_BODY()
+	UPROPERTY()
+	TArray<FVector> Points;
+	UPROPERTY()
+	TArray<FOpeningSnapshot> OpeningSnapshot;
+	UPROPERTY()
+	TArray<FWallJunction> Junctions;
+	float Height = 300.f;
+	float Thickness = 100.f;
+	bool bClosed = false;
+	bool bRounded = false;
+	float RoofRise = 180.f;
+};
 class USelectionAndHandlesComponent;
 UCLASS()
 class HOMEBUILDER_API ABuilding : public AActor
@@ -71,9 +97,15 @@ public:
 	UInputAction* IA_Cancel;
 	UPROPERTY(EditAnywhere, Category = "Building|Input")
 	UInputAction* IA_Context;
+	UPROPERTY(EditAnywhere, Category = "Building|Input")
+	UInputAction* IA_Undo;
+	UPROPERTY(EditAnywhere, Category = "Building|Input")
+	UInputAction* IA_Redo;
 
-	UPROPERTY(VisibleAnywhere, Category = "Building|Tools|Wall")
+	UPROPERTY()
 	TArray<FWallData> Walls;
+	TArray<TArray<FWallSnapshot>> UndoStack;
+	TArray<TArray<FWallSnapshot>> RedoStack;
 	static constexpr float WallStep = 64.f;
 	UPROPERTY(EditAnywhere, Category = "Building|Tools|Wall")
 	UMaterialInterface* WallMaterial;
@@ -108,7 +140,21 @@ public:
 
 	UFUNCTION()
 	void HandleModeChange(EToolMode NewMode);
+	UFUNCTION()
+	void PushUndoState();
+	UFUNCTION()
+	void Undo();
+	UFUNCTION()
+	void Redo();
 
+	UFUNCTION(BlueprintPure, Category = "Building|Undo")
+	bool CanUndo() const {return !UndoStack.IsEmpty();};
+	UFUNCTION(BlueprintPure, Category = "Building|Redo")
+	bool CanRedo() const {return !RedoStack.IsEmpty();};
+
+	UFUNCTION(BlueprintPure, Category = "Building", meta = (WorldContext = "WorldContextObject"))
+	static ABuilding* GetBuilding(const UObject* WorldContextObject);
+	
 	FVector MousePosition;
 	bool UpdateMousePosition();
 	//Building
@@ -144,9 +190,12 @@ protected:
 
 	//Walls && Floor && Roof
 	const float FloorZOffset = 2.f;
+	const int32 UndoCap = 50;
 
 	void ApplySplineType(USplineComponent* Spline, bool bRounded);
 	int32 SpawnWall(const TArray<FVector>& WorldPoints, const FWallData& Template);
+	TArray<FWallSnapshot> TakeSnapshot();
+	void RestoreSnapshot(const TArray<FWallSnapshot>& Walls);
 	void BuildFloorMesh(const USplineComponent* Spline, UProceduralMeshComponent* Target);
 	void BuildRoofMesh(const USplineComponent* Spline, const int32 WallHeight, const int32 WallThickness,float RoofRise, UProceduralMeshComponent* Target);
 

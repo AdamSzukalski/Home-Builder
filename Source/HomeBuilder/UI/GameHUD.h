@@ -57,6 +57,10 @@ public:
 	FOnModeChanged OnModeChanged;
 	UPROPERTY(BlueprintCallable, Category = "UI|Events")
 	FOnDeleteRequested OnDeleteRequested;
+	UPROPERTY(BlueprintCallable, Category = "UI|Events")
+	FOnUndoRequested OnUndoRequested;
+	UPROPERTY(BlueprintCallable, Category = "UI|Events")
+	FOnRedoRequested OnRedoRequested;
 	UPROPERTY(BlueprintAssignable, Category = "UI|Events")
 	FOnCornerContext OnCornerContext;
 	UPROPERTY(BlueprintAssignable, Category = "UI|Events")
@@ -66,6 +70,10 @@ public:
 	
 	UFUNCTION(BlueprintCallable, Category = "UI|Events")
 	void RequestDelete();
+	UFUNCTION(BlueprintCallable, Category = "UI|Events")
+	void RequestUndo();
+	UFUNCTION(BlueprintCallable, Category = "UI|Events")
+	void RequestRedo();
 	
 	UFUNCTION(BlueprintCallable, Category = "UI|State")
 	void SetTerrainTool(ETerrainTool NewTool);

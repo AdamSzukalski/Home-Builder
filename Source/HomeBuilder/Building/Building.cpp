@@ -8,6 +8,7 @@
 #include "SelectionAndHandlesComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Algo/Reverse.h"
+#include "Kismet/GameplayStatics.h"
 
 ABuilding::ABuilding()
 {
@@ -42,12 +43,16 @@ void ABuilding::BeginPlay()
 	EnhancedInputComponent->BindAction(IA_Commit, ETriggerEvent::Completed, this, &ABuilding::DrawingFinished);
 	EnhancedInputComponent->BindAction(IA_Cancel, ETriggerEvent::Completed, this, &ABuilding::DrawingCancelled);
 	EnhancedInputComponent->BindAction(IA_Context, ETriggerEvent::Started, this, &ABuilding::RightClick);
+	EnhancedInputComponent->BindAction(IA_Undo, ETriggerEvent::Started, this, &ABuilding::Undo);
+	EnhancedInputComponent->BindAction(IA_Redo, ETriggerEvent::Started, this, &ABuilding::Redo);
 
 	GameHUD = Cast<AGameHUD>(PlayerController->GetHUD());
 	if (!GameHUD) return;
 	GameHUD->OnModeChanged.AddDynamic(this, &ABuilding::HandleModeChange);
 	GameHUD->OnDeleteRequested.AddDynamic(Selection, &USelectionAndHandlesComponent::DeleteSelected);
 	GameHUD->OnDeleteCornerRequested.AddDynamic(Selection, &USelectionAndHandlesComponent::DeleteHoveredCorner);
+	GameHUD->OnUndoRequested.AddDynamic(this, &ABuilding::Undo);
+	GameHUD->OnRedoRequested.AddDynamic(this, &ABuilding::Redo);
 
 	if (!PreviewMaterial) return;
 	OpeningPreview->SetMaterial(0, PreviewMaterial);
@@ -85,6 +90,31 @@ void ABuilding::HandleModeChange(EToolMode NewMode)
 	Subsystem->AddMappingContext(IMC_Building, 0);
 	SetActorTickEnabled(true);
 }
+void ABuilding::PushUndoState()
+{
+	UndoStack.Add(TakeSnapshot());
+	if (UndoStack.Num() > UndoCap)
+		UndoStack.RemoveAt(0);
+	RedoStack.Empty();
+}
+void ABuilding::Undo()
+{
+	if (UndoStack.Num() == 0) return;
+	RedoStack.Add(TakeSnapshot());
+	RestoreSnapshot(UndoStack.Pop());
+}
+void ABuilding::Redo()
+{
+	if (RedoStack.Num() == 0) return;
+	UndoStack.Add(TakeSnapshot());
+	RestoreSnapshot(RedoStack.Pop());
+}
+//Helper to get building from everywhere
+ABuilding* ABuilding::GetBuilding(const UObject* WorldContextObject)
+{
+	return Cast<ABuilding>(UGameplayStatics::GetActorOfClass(WorldContextObject, ABuilding::StaticClass()));
+}
+
 //Drawing
 bool ABuilding::UpdateMousePosition()
 {
@@ -153,7 +183,8 @@ void ABuilding::DrawingFinished()
 	NewMesh->RegisterComponent();
 	NewMesh->SetCollisionResponseToAllChannels(ECR_Block);
 	NewMesh->bUseAsyncCooking = true;
-	
+
+	PushUndoState();
 	Walls.Add(FWallData{CurrentSpline, NewMesh});
 	Walls.Last().bRounded = GameHUD->bRoundedWalls;
 	FVector FirstPointLocation = CurrentSpline->GetLocationAtSplinePoint(0, ESplineCoordinateSpace::World);
@@ -600,6 +631,98 @@ int32 ABuilding::SpawnWall(const TArray<FVector>& WorldPoints, const FWallData& 
 	W.bRounded = Template.bRounded;
 	return Walls.Add(W);   // bClosed defaults false
 }
+TArray<FWallSnapshot> ABuilding::TakeSnapshot()
+{
+	TArray<FWallSnapshot> Snapshot;
+	for (const FWallData& W : Walls)
+	{
+		FWallSnapshot S;
+		for (int i = 0; i < W.SplineComponent->GetNumberOfSplinePoints(); i++)
+		{
+			S.Points.Add(W.SplineComponent->GetLocationAtSplinePoint(i, ESplineCoordinateSpace::World));
+		}
+		for (int i = 0; i < W.OpeningData.Num(); i++)
+		{
+			FOpeningSnapshot O;
+			O.Distance = W.OpeningData[i].Distance;
+			O.Width = W.OpeningData[i].Width;
+			O.SillHeight = W.OpeningData[i].SillHeight;
+			O.OpeningHeight = W.OpeningData[i].OpeningHeight;
+			O.bIsDoor = W.OpeningData[i].bIsDoor;
+			S.OpeningSnapshot.Add(O);
+		}
+		S.Junctions = W.Junctions;
+		S.Height = W.Height;
+		S.Thickness = W.Thickness;
+		S.bClosed = W.bClosed;
+		S.bRounded = W.bRounded;
+		S.RoofRise = W.RoofRise;
+		Snapshot.Add(S);
+	}
+	return Snapshot;
+}
+void ABuilding::RestoreSnapshot(const TArray<FWallSnapshot>& Snapshot)
+{
+	while (Walls.Num() > Snapshot.Num())
+	{
+		for (FOpeningData& O : Walls.Last().OpeningData)
+		{
+			if (O.OpeningMesh) O.OpeningMesh->DestroyComponent();
+		}
+		Walls.Last().WallMesh->DestroyComponent();
+		Walls.Last().SplineComponent->DestroyComponent();
+		Walls.RemoveAt(Walls.Num() - 1);
+	}
+	while (Walls.Num() < Snapshot.Num())
+	{
+		FWallData W;
+		SpawnWall(Snapshot[Walls.Num()].Points, W);
+	}
+	for (int i = 0; i < Snapshot.Num(); i++)
+	{
+		Walls[i].SplineComponent->ClearSplinePoints();
+		for (int j = 0; j < Snapshot[i].Points.Num(); j++)
+		{
+			Walls[i].SplineComponent->AddSplinePoint(Snapshot[i].Points[j], ESplineCoordinateSpace::World);
+		}
+		ApplySplineType(Walls[i].SplineComponent, Snapshot[i].bRounded);
+
+		Walls[i].Junctions = Snapshot[i].Junctions;
+		Walls[i].Height = Snapshot[i].Height;
+		Walls[i].Thickness = Snapshot[i].Thickness;
+		Walls[i].bClosed = Snapshot[i].bClosed;
+		Walls[i].bRounded = Snapshot[i].bRounded;
+		Walls[i].RoofRise = Snapshot[i].RoofRise;
+		
+		for (FOpeningData& O : Walls[i].OpeningData)
+		{
+			if (O.OpeningMesh) O.OpeningMesh->DestroyComponent();
+		}
+		Walls[i].OpeningData.Empty();
+
+		for (const FOpeningSnapshot& SavedOpening : Snapshot[i].OpeningSnapshot)
+		{
+			FOpeningData NewOpening;
+			NewOpening.Distance = SavedOpening.Distance;
+			NewOpening.Width = SavedOpening.Width;
+			NewOpening.SillHeight = SavedOpening.SillHeight;
+			NewOpening.OpeningHeight = SavedOpening.OpeningHeight;
+			NewOpening.bIsDoor = SavedOpening.bIsDoor;
+
+			UStaticMeshComponent* OpeningMesh = NewObject<UStaticMeshComponent>(this);
+			OpeningMesh->SetupAttachment(RootComponent);
+			OpeningMesh->RegisterComponent();
+			OpeningMesh->SetStaticMesh(NewOpening.bIsDoor ? DoorMesh : WindowMesh);
+			OpeningMesh->SetWorldTransform(FBuildingMesh::TransformMesh(OpeningMesh->GetStaticMesh(),
+				Walls[i].SplineComponent, NewOpening, Walls[i].Thickness));
+
+			NewOpening.OpeningMesh = OpeningMesh;
+			Walls[i].OpeningData.Add(NewOpening);
+		}
+
+		RebuildWall(i);
+	}
+}
 void ABuilding::BuildFloorMesh(const USplineComponent* Spline, UProceduralMeshComponent* Target)
 {
 	FMeshBuffers B = FBuildingMesh::BuildFloor(Spline, WallStep, FloorZOffset);
@@ -685,6 +808,7 @@ void ABuilding::PlaceOpening(EBuildTool Tool)
 	OpeningMesh->SetWorldTransform(FBuildingMesh::TransformMesh(OpeningMesh->GetStaticMesh(),
 		Walls[WallIndex].SplineComponent, OpeningData, Walls[WallIndex].Thickness));
 
+	PushUndoState();
 	OpeningData.OpeningMesh = OpeningMesh;
 	Walls[WallIndex].OpeningData.Add(OpeningData);
 

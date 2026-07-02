@@ -43,7 +43,14 @@ void AGameHUD::RequestDelete()
 {
 	OnDeleteRequested.Broadcast();
 }
-
+void AGameHUD::RequestUndo()
+{
+	OnUndoRequested.Broadcast();
+}
+void AGameHUD::RequestRedo()
+{
+	OnRedoRequested.Broadcast();
+}
 void AGameHUD::SetBrushSize(int32 NewSize)
 {
 	BrushSize = NewSize;
@@ -76,6 +83,7 @@ AGameHUD* AGameHUD::GetGameHUD(const UObject* WorldContextObject)
 	if (!PlayerController) return nullptr;
 	return Cast<AGameHUD>(PlayerController->GetHUD());
 }
+
 
 
 

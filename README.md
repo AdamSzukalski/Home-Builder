@@ -16,6 +16,7 @@ I'm building this as the centerpiece of my programming portfolio, documenting ea
 - **Doors & windows** — openings follow the wall when edited, stack above/below each other, and hide when they no longer fit
 - **Roofs** — gable roofs with connecting ridges and a convex **straight-skeleton hip roof** fallback for non-rectangular rooms; per-room roof height, selectable, draggable, and fully flat-roof capable
 - **Selection system** — pick walls, openings, or roofs, each highlighted with a camera-facing dashed outline
+- **Undo / redo** — snapshot-based history for every edit (drawing, dragging, deleting), via Ctrl+Z/Ctrl+Y or HUD buttons
 
 ### 🌍 Terrain Editor
 - Runtime sculpting (raise / lower) on a procedural mesh
@@ -62,9 +63,9 @@ Automatically generated folders (Binaries, Intermediate, Saved, DerivedDataCache
 - [x] Doors & windows with live editing
 - [x] Wall merging and T-junctions
 - [x] Gable and hip roofs with adjustable, selectable height
+- [x] Undo / redo
 
 ### 🎯 Short-term (polish toward a finished demo)
-- [ ] Undo / redo
 - [ ] Snapping feedback and cleaner handle visuals
 - [ ] Lighting and material pass for presentation
 - [ ] Save / load buildings
